@@ -32,6 +32,7 @@ jobs:
           node-version: 20
 
       - name: Entegra'dan siparişleri çek
+        timeout-minutes: 50
         env:
           ENTEGRA_EMAIL: ${{ secrets.ENTEGRA_EMAIL }}
           ENTEGRA_PASSWORD: ${{ secrets.ENTEGRA_PASSWORD }}
@@ -41,9 +42,11 @@ jobs:
         run: node scripts/fetch-orders.mjs
 
       - name: Verileri kaydet
+        if: always()
         run: |
           git config user.name "siparis-botu"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          [ -d docs/data ] || { echo "Kaydedilecek veri yok."; exit 0; }
           git add docs/data
           if git diff --cached --quiet; then
             echo "Değişiklik yok."
