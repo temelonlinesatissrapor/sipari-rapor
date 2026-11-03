@@ -92,8 +92,19 @@ export function normalizeOrder(o) {
     };
   });
 
-  const itemsTotal = items.reduce((a, b) => a + b.total, 0);
+  let itemsTotal = items.reduce((a, b) => a + b.total, 0);
   const totalField = pick(o, FIELDS.total);
+
+  // Ürün satırlarındaki fiyatın KDV dahil/hariç olduğu hesaptan hesaba değişebiliyor.
+  // Sipariş toplamı varsa ürün tutarlarını ona orantılayarak ürün cirosunu sipariş cirosuyla tutarlı tutarız.
+  const orderTotal = totalField !== undefined ? num(totalField) : 0;
+  if (orderTotal > 0 && itemsTotal > 0) {
+    const f = orderTotal / itemsTotal;
+    if (f > 0.4 && f < 2.5) {
+      items.forEach((it) => { it.total = round2(it.total * f); });
+      itemsTotal = orderTotal;
+    }
+  }
   const status = String(pick(o, FIELDS.status) ?? '');
   const itemCommission = items.reduce((a, b) => a + b.commission, 0);
 

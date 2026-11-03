@@ -18,29 +18,30 @@ export const DEFAULT_LOOKBACK_DAYS = Number(process.env.LOOKBACK_DAYS || 7);
 export const TIMEZONE = 'Europe/Istanbul';
 
 // Entegra'dan gelen ham alan adı adayları (ilk dolu olan kullanılır)
+// (Entegra'nın gerçek sipariş yanıtına göre düzenlendi — Kasım 2026)
 export const FIELDS = {
   id: ['id', 'order_id', 'entegra_id'],
-  orderNo: ['order_id', 'order_number', 'order_no', 'id'],
+  orderNo: ['order_number', 'platform_reference_no', 'supplier_order_id', 'no', 'order_id', 'id'],
   marketplace: ['supplier', 'store', 'marketplace', 'platform', 'source'],
-  date: ['order_date', 'datetime', 'created_at', 'date'],
-  status: ['status_name', 'status_text', 'status', 'order_status'],
-  total: ['total', 'grand_total', 'total_price', 'order_total', 'amount'],
-  cargoPrice: ['cargo_price', 'shipping_price', 'cargo_amount'],
-  commission: ['commission', 'commission_amount', 'total_commission'],
-  discount: ['discount', 'total_discount'],
-  cargo: ['cargo', 'cargo_company', 'shipping_company'],
+  date: ['datetime', 'order_date', 'date_add', 'created_at', 'date'],
+  status: ['store_order_status_name', 'store_order_status', 'status_name', 'status_text', 'status', 'order_status'],
+  total: ['grand_total', 'total_paid_price', 'total', 'total_price', 'order_total', 'amount'],
+  cargoPrice: ['cargo_cost', 'mut_kargo', 'cargo_price', 'shipping_price', 'cargo_amount'],
+  commission: ['total_commission_include_tax', 'commission', 'commission_amount', 'total_commission'],
+  discount: ['discount', 'coupon_price', 'total_discount'],
+  cargo: ['cargo_company', 'cargo', 'shipping_company'],
   city: ['ship_city', 'invoice_city', 'city'],
-  items: ['order_details', 'products', 'items', 'lines'],
+  items: ['order_product', 'order_products', 'order_details', 'products', 'items', 'lines'],
 };
 
 export const ITEM_FIELDS = {
-  sku: ['product_code', 'sku', 'stock_code', 'barcode'],
-  name: ['product_name', 'name', 'title'],
-  quantity: ['quantity', 'qty', 'amount'],
-  price: ['price', 'unit_price', 'sale_price'],
+  sku: ['product_code', 'productCode', 'stock_code', 'stockCode', 'sku', 'merchant_sku', 'barcode', 'product_id'],
+  name: ['product_name', 'productName', 'name', 'title', 'product_title'],
+  quantity: ['quantity', 'qty', 'piece', 'adet', 'amount'],
+  price: ['price', 'unit_price', 'sale_price', 'total_price', 'amount_price'],
   firstPrice: ['first_price', 'list_price'],
-  vat: ['vat', 'kdv', 'tax_rate'],
-  commission: ['commission', 'commission_amount'],
+  vat: ['vat', 'tax', 'kdv', 'tax_rate', 'vat_rate'],
+  commission: ['commission', 'commission_amount', 'commission_include_tax'],
 };
 
 // Entegra "price" alanını KDV hariç gönderiyor. Satır tutarı hesaplanırken
@@ -51,7 +52,7 @@ export const DEFAULT_VAT = 20;
 // Durum metnine göre gruplama (küçük harfle aranır)
 export const STATUS_GROUPS = [
   { key: 'iptal', label: 'İptal', match: ['iptal', 'cancel', 'tedarik edilemedi', 'unsupplied'] },
-  { key: 'iade', label: 'İade', match: ['iade', 'return', 'refund', 'claim'] },
+  { key: 'iade', label: 'İade', match: ['iade', 'return', 'refund', 'claim', 'undeliver', 'teslim edilemedi', 'ulaştırılamadı'] },
   { key: 'teslim', label: 'Teslim Edildi', match: ['teslim', 'deliver', 'tamamlan', 'complete'] },
   { key: 'kargo', label: 'Kargoda', match: ['kargo', 'ship', 'gönderil', 'yolda'] },
   { key: 'yeni', label: 'Yeni / Hazırlanıyor', match: [] }, // varsayılan grup
