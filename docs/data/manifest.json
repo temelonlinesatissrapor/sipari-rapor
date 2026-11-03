@@ -1,0 +1,14 @@
+{
+  "updatedAt": "2026-11-03T10:43:20.613Z",
+  "encrypted": true,
+  "months": [
+    "2026-11"
+  ],
+  "lastRun": {
+    "start": "2026-11-01",
+    "end": "2026-11-03",
+    "fetched": 946,
+    "added": 946,
+    "updated": 0
+  }
+}
