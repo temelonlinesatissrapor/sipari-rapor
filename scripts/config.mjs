@@ -35,12 +35,13 @@ export const FIELDS = {
 };
 
 export const ITEM_FIELDS = {
-  sku: ['product_code', 'productCode', 'stock_code', 'stockCode', 'sku', 'merchant_sku', 'barcode', 'product_id'],
-  name: ['product_name', 'productName', 'name', 'title', 'product_title'],
-  quantity: ['quantity', 'qty', 'piece', 'adet', 'amount'],
-  price: ['price', 'unit_price', 'sale_price', 'total_price', 'amount_price'],
+  sku: ['model', 'product_code', 'productCode', 'store_stock_code', 'stock_code', 'sku', 'barcode', 'product_id'],
+  name: ['name', 'product_name', 'productName', 'title', 'product_title'],
+  quantity: ['quantity', 'qty', 'piece', 'adet'],
+  priceInclTax: ['priceIncludedTax', 'price_include_tax'], // KDV dahil birim fiyat (varsa öncelikli)
+  price: ['price', 'unit_price', 'sale_price'],
   firstPrice: ['first_price', 'list_price'],
-  vat: ['vat', 'tax', 'kdv', 'tax_rate', 'vat_rate'],
+  vat: ['vat', 'kdv', 'tax_rate', 'vat_rate'], // oran (%); Entegra'nın "tax" alanı tutar olabileceği için kullanılmaz
   commission: ['commission', 'commission_amount', 'commission_include_tax'],
 };
 
@@ -54,6 +55,8 @@ export const STATUS_GROUPS = [
   { key: 'iptal', label: 'İptal', match: ['iptal', 'cancel', 'tedarik edilemedi', 'unsupplied'] },
   { key: 'iade', label: 'İade', match: ['iade', 'return', 'refund', 'claim', 'undeliver', 'teslim edilemedi', 'ulaştırılamadı'] },
   { key: 'teslim', label: 'Teslim Edildi', match: ['teslim', 'deliver', 'tamamlan', 'complete'] },
+  // "Kargoya Verilecek", "Kargoya Hazır" henüz gönderilmemiş siparişlerdir; "kargo" kuralından önce yakalanır
+  { key: 'yeni', label: 'Yeni / Hazırlanıyor', match: ['verilecek', 'hazır', 'hazirlan', 'hazırlan', 'yeni', 'onay', 'paketlen', 'created', 'picking'] },
   { key: 'kargo', label: 'Kargoda', match: ['kargo', 'ship', 'gönderil', 'yolda'] },
   { key: 'yeni', label: 'Yeni / Hazırlanıyor', match: [] }, // varsayılan grup
 ];
@@ -71,5 +74,6 @@ export const MARKETPLACES = [
   { key: 'koctas', label: 'Koçtaş', match: ['koctas', 'koçtaş'] },
   { key: 'teknosa', label: 'Teknosa', match: ['teknosa'] },
   { key: 'modanisa', label: 'Modanisa', match: ['modanisa'] },
+  { key: 'passo', label: 'Passo', match: ['passo'] },
   { key: 'eticaret', label: 'E-Ticaret Sitesi', match: ['site', 'eticaret', 'e-ticaret', 'web', 'woocommerce', 'ideasoft', 'ticimax', 'opencart', 'shopify'] },
 ];

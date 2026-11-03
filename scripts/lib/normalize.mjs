@@ -78,8 +78,9 @@ export function normalizeOrder(o) {
   const rawItems = pick(o, FIELDS.items);
   const items = (Array.isArray(rawItems) ? rawItems : []).map((it) => {
     const qty = num(pick(it, ITEM_FIELDS.quantity)) || 1;
-    let price = num(pick(it, ITEM_FIELDS.price));
-    if (ITEM_PRICE_EXCLUDES_VAT) {
+    const incl = num(pick(it, ITEM_FIELDS.priceInclTax));
+    let price = incl || num(pick(it, ITEM_FIELDS.price));
+    if (!incl && ITEM_PRICE_EXCLUDES_VAT) {
       const vat = pick(it, ITEM_FIELDS.vat);
       price *= 1 + (vat === undefined ? DEFAULT_VAT : num(vat)) / 100;
     }
