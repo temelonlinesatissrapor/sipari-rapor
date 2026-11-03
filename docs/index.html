@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Sipariş Raporları</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M8 22V14M14 22V9M20 22v-6M26 22V12' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- Şifre ekranı -->
+<section id="gate" class="gate hidden">
+  <form class="gate-card" id="gate-form" autocomplete="on">
+    <div class="brand-mark" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg></div>
+    <h1>Sipariş Raporları</h1>
+    <p>Veriler şifreli. Devam etmek için rapor şifresini girin.</p>
+    <input type="text" name="username" value="rapor" autocomplete="username" class="hidden" aria-hidden="true" tabindex="-1">
+    <input class="ctl" type="password" id="gate-pass" autocomplete="current-password" placeholder="Rapor şifresi" required>
+    <label class="remember"><input type="checkbox" id="gate-remember"> Bu cihazda hatırla</label>
+    <button class="btn primary" type="submit" id="gate-btn">Aç</button>
+    <div class="err" id="gate-err" role="alert"></div>
+  </form>
+</section>
+
+<div id="app" class="hidden">
+  <header class="topbar">
+    <div class="topbar-in">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 13V8M7 13V4M11 13V9M15 13V6"/></svg></span>Sipariş Raporları</div>
+      <nav class="tabs" role="tablist">
+        <button class="tab" role="tab" data-view="gunluk">Günlük</button>
+        <button class="tab" role="tab" data-view="aylik">Aylık</button>
+        <button class="tab" role="tab" data-view="detay">Detaylı Rapor</button>
+      </nav>
+      <span class="spacer"></span>
+      <span class="updated" id="updated"></span>
+      <button class="icon-btn" id="theme-btn" title="Açık / koyu tema" aria-label="Tema değiştir">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor"/></svg>
+      </button>
+      <button class="icon-btn hidden" id="lock-btn" title="Kilitle" aria-label="Kilitle">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div id="notice" class="notice hidden"></div>
+
+    <!-- GÜNLÜK -->
+    <section id="view-gunluk" class="view hidden">
+      <div class="view-head">
+        <div><h1 id="g-title">Günlük Rapor</h1><p id="g-sub"></p></div>
+        <div class="controls">
+          <div class="stepper">
+            <button class="btn" id="g-prev" aria-label="Önceki gün">‹</button>
+            <input class="ctl" type="date" id="g-date">
+            <button class="btn" id="g-next" aria-label="Sonraki gün">›</button>
+          </div>
+          <button class="btn" id="g-today">Bugün</button>
+        </div>
+      </div>
+      <div class="kpis" id="g-kpis"></div>
+      <div class="grid">
+        <div class="card span-7">
+          <h2>Pazaryeri dağılımı</h2><p class="sub">Seçilen günün cirosu ve siparişleri</p>
+          <div class="table-scroll"><table id="g-mp"></table></div>
+        </div>
+        <div class="card span-5">
+          <h2>Saatlik sipariş</h2><p class="sub">Pazaryerine göre sipariş sayısı</p>
+          <div class="legend" id="g-hour-legend"></div>
+          <div class="chart-wrap short"><div id="g-hour" aria-label="Saatlik sipariş grafiği"></div></div>
+        </div>
+        <div class="card span-6">
+          <h2>Günün en çok satanları</h2><p class="sub">Adede göre</p>
+          <div class="table-scroll"><table id="g-products"></table></div>
+        </div>
+        <div class="card span-6">
+          <h2>Son 14 gün</h2><p class="sub">Günlük ciro, pazaryerine göre</p>
+          <div class="legend" id="g-trend-legend"></div>
+          <div class="chart-wrap short"><div id="g-trend" aria-label="Son 14 gün ciro grafiği"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Günün siparişleri</h2><p class="sub" id="g-orders-sub"></p></div>
+            <button class="btn" id="g-csv">Excel'e aktar (CSV)</button></div>
+          <div class="table-scroll"><table id="g-orders"></table></div>
+          <div class="pager" id="g-pager"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- AYLIK -->
+    <section id="view-aylik" class="view hidden">
+      <div class="view-head">
+        <div><h1 id="a-title">Aylık Rapor</h1><p id="a-sub"></p></div>
+        <div class="controls">
+          <div class="stepper">
+            <button class="btn" id="a-prev" aria-label="Önceki ay">‹</button>
+            <input class="ctl" type="month" id="a-month">
+            <button class="btn" id="a-next" aria-label="Sonraki ay">›</button>
+          </div>
+          <select class="ctl" id="a-metric" aria-label="Grafik ölçüsü">
+            <option value="total">Ciro</option>
+            <option value="count">Sipariş adedi</option>
+          </select>
+        </div>
+      </div>
+      <div class="kpis" id="a-kpis"></div>
+      <div class="grid">
+        <div class="card">
+          <h2 id="a-daily-title">Günlük ciro</h2><p class="sub">Ayın her günü, pazaryerine göre</p>
+          <div class="legend" id="a-daily-legend"></div>
+          <div class="chart-wrap"><div id="a-daily" aria-label="Aylık günlük grafik"></div></div>
+        </div>
+        <div class="card">
+          <h2>Pazaryeri performansı</h2><p class="sub">Önceki aya göre değişim ile</p>
+          <div class="table-scroll"><table id="a-mp"></table></div>
+        </div>
+        <div class="card span-5">
+          <h2>Sipariş durumları</h2><p class="sub">Ay içindeki tüm siparişler</p>
+          <div class="table-scroll"><table id="a-status"></table></div>
+        </div>
+        <div class="card span-7">
+          <h2>Ayın en çok satan ürünleri</h2><p class="sub">Ciroya göre ilk 15</p>
+          <div class="table-scroll"><table id="a-products"></table></div>
+        </div>
+        <div class="card">
+          <h2>Gün gün özet</h2><p class="sub">Her pazaryeri için ciro</p>
+          <div class="table-scroll" style="max-height:460px;overflow:auto"><table id="a-days"></table></div>
+        </div>
+        <div class="card">
+          <h2>Son 12 ay</h2><p class="sub">Aylık ciro, pazaryerine göre</p>
+          <div class="legend" id="a-year-legend"></div>
+          <div class="chart-wrap short"><div id="a-year" aria-label="Son 12 ay grafiği"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DETAYLI -->
+    <section id="view-detay" class="view hidden">
+      <div class="view-head">
+        <div><h1>Detaylı Rapor</h1><p id="d-sub"></p></div>
+        <div class="controls">
+          <button class="btn" id="d-csv">Siparişleri CSV indir</button>
+          <button class="btn" id="d-csv-products">Ürünleri CSV indir</button>
+        </div>
+      </div>
+      <div class="filterbar">
+        <div class="filterrow">
+          <span class="lbl">Tarih</span>
+          <select class="ctl" id="d-preset" aria-label="Tarih aralığı">
+            <option value="7">Son 7 gün</option>
+            <option value="30" selected>Son 30 gün</option>
+            <option value="90">Son 90 gün</option>
+            <option value="thisMonth">Bu ay</option>
+            <option value="lastMonth">Geçen ay</option>
+            <option value="thisYear">Bu yıl</option>
+            <option value="all">Tüm veriler</option>
+            <option value="custom">Özel aralık</option>
+          </select>
+          <input class="ctl" type="date" id="d-start" aria-label="Başlangıç">
+          <span style="color:var(--muted)">–</span>
+          <input class="ctl" type="date" id="d-end" aria-label="Bitiş">
+          <select class="ctl" id="d-status" aria-label="Durum">
+            <option value="">Tüm durumlar</option>
+          </select>
+          <label style="display:inline-flex;gap:6px;align-items:center;color:var(--ink-2)"><input type="checkbox" id="d-excl"> İptal/iadeleri ciroya katma</label>
+        </div>
+        <div class="filterrow"><span class="lbl">Pazaryeri</span><div id="d-mps" class="controls"></div></div>
+        <div class="filterrow"><span class="lbl">Ara</span><input class="ctl search" id="d-q" type="search" placeholder="Sipariş no, ürün adı, stok kodu, şehir, kargo…"></div>
+      </div>
+      <div class="kpis" id="d-kpis"></div>
+      <div class="grid">
+        <div class="card">
+          <div class="card-head"><div><h2 id="d-trend-title">Ciro trendi</h2><p class="sub" id="d-trend-sub"></p></div>
+            <div class="controls">
+              <select class="ctl" id="d-gran" aria-label="Zaman aralığı"><option value="auto">Otomatik</option><option value="day">Günlük</option><option value="week">Haftalık</option><option value="month">Aylık</option></select>
+              <select class="ctl" id="d-metric" aria-label="Ölçü"><option value="total">Ciro</option><option value="count">Sipariş</option><option value="qty">Ürün adedi</option></select>
+            </div></div>
+          <div class="legend" id="d-trend-legend"></div>
+          <div class="chart-wrap"><div id="d-trend" aria-label="Trend grafiği"></div></div>
+        </div>
+        <div class="card">
+          <h2>Pazaryeri karşılaştırması</h2><p class="sub">Komisyon ve kargo Entegra'dan geliyorsa net tutar hesaplanır</p>
+          <div class="table-scroll"><table id="d-mp"></table></div>
+        </div>
+        <div class="card span-8">
+          <div class="card-head"><div><h2>Ürün performansı</h2><p class="sub">Pazaryeri kırılımıyla, başlığa tıklayarak sıralayın</p></div></div>
+          <div class="table-scroll" style="max-height:520px;overflow:auto"><table id="d-products"></table></div>
+        </div>
+        <div class="card span-4">
+          <h2>Şehirler</h2><p class="sub">Ciroya göre ilk 12</p>
+          <div class="table-scroll"><table id="d-cities"></table></div>
+          <h2 style="margin-top:20px">Haftanın günleri</h2><p class="sub">Ortalama günlük ciro</p>
+          <div class="table-scroll"><table id="d-weekday"></table></div>
+        </div>
+        <div class="card">
+          <h2>Siparişler</h2><p class="sub" id="d-orders-sub"></p>
+          <div class="table-scroll"><table id="d-orders"></table></div>
+          <div class="pager" id="d-pager"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="boot" class="loading">Yükleniyor…</div>
+<script src="app.js"></script>
+</body>
+</html>
