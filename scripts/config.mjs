@@ -32,6 +32,7 @@ export const FIELDS = {
   cargo: ['cargo_company', 'cargo', 'shipping_company'],
   city: ['ship_city', 'invoice_city', 'city'],
   items: ['order_product', 'order_products', 'order_details', 'products', 'items', 'lines'],
+  changed: ['date_change', 'updated_at', 'last_update'], // iade/iptal tarihini yaklaşık göstermek için
 };
 
 export const ITEM_FIELDS = {
@@ -43,6 +44,7 @@ export const ITEM_FIELDS = {
   firstPrice: ['first_price', 'list_price'],
   vat: ['vat', 'kdv', 'tax_rate', 'vat_rate'], // oran (%); Entegra'nın "tax" alanı tutar olabileceği için kullanılmaz
   commission: ['commission', 'commission_amount', 'commission_include_tax'],
+  status: ['store_order_status_name', 'status_name', 'store_order_status'], // ürün satırının kendi durumu
 };
 
 // Entegra "price" alanını KDV hariç gönderiyor. Satır tutarı hesaplanırken
@@ -52,6 +54,7 @@ export const DEFAULT_VAT = 20;
 
 // Durum metnine göre gruplama (küçük harfle aranır)
 export const STATUS_GROUPS = [
+  { key: 'kismi', label: 'Kısmi İade', match: ['kısmi', 'kismi', 'partial'] },
   { key: 'iptal', label: 'İptal', match: ['iptal', 'cancel', 'tedarik edilemedi', 'unsupplied'] },
   { key: 'iade', label: 'İade', match: ['iade', 'return', 'refund', 'claim', 'undeliver', 'teslim edilemedi', 'ulaştırılamadı'] },
   { key: 'teslim', label: 'Teslim Edildi', match: ['teslim', 'deliver', 'tamamlan', 'complete'] },

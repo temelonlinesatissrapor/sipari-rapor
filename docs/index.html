@@ -32,6 +32,7 @@
         <button class="tab" role="tab" data-view="gunluk">Günlük</button>
         <button class="tab" role="tab" data-view="aylik">Aylık</button>
         <button class="tab" role="tab" data-view="detay">Detaylı Rapor</button>
+        <button class="tab" role="tab" data-view="iade-iptal">İade &amp; İptal</button>
       </nav>
       <span class="spacer"></span>
       <span class="updated" id="updated"></span>
@@ -53,35 +54,38 @@
         <div><h1 id="g-title">Günlük Rapor</h1><p id="g-sub"></p></div>
         <div class="controls">
           <div class="stepper">
-            <button class="btn" id="g-prev" aria-label="Önceki gün">‹</button>
-            <input class="ctl" type="date" id="g-date">
-            <button class="btn" id="g-next" aria-label="Sonraki gün">›</button>
+            <button class="btn" id="g-prev" aria-label="Önceki dönem">‹</button>
+            <input class="ctl" type="date" id="g-start" aria-label="Başlangıç günü">
+            <span class="range-dash">–</span>
+            <input class="ctl" type="date" id="g-end" aria-label="Bitiş günü">
+            <button class="btn" id="g-next" aria-label="Sonraki dönem">›</button>
           </div>
           <button class="btn" id="g-today">Bugün</button>
+          <button class="btn" id="g-yesterday">Dün</button>
         </div>
       </div>
       <div class="kpis" id="g-kpis"></div>
       <div class="grid">
         <div class="card span-7">
-          <h2>Pazaryeri dağılımı</h2><p class="sub">Seçilen günün cirosu ve siparişleri</p>
+          <h2>Pazaryeri dağılımı</h2><p class="sub">İade ve iptaller hariç</p>
           <div class="table-scroll"><table id="g-mp"></table></div>
         </div>
         <div class="card span-5">
-          <h2>Saatlik sipariş</h2><p class="sub">Pazaryerine göre sipariş sayısı</p>
+          <h2>Saatlik sipariş</h2><p class="sub" id="g-hour-sub">Pazaryerine göre sipariş sayısı</p>
           <div class="legend" id="g-hour-legend"></div>
           <div class="chart-wrap short"><div id="g-hour" aria-label="Saatlik sipariş grafiği"></div></div>
         </div>
         <div class="card span-6">
-          <h2>Günün en çok satanları</h2><p class="sub">Adede göre</p>
+          <h2 id="g-products-title">Günün en çok satanları</h2><p class="sub">Adede göre</p>
           <div class="table-scroll"><table id="g-products"></table></div>
         </div>
         <div class="card span-6">
-          <h2>Son 14 gün</h2><p class="sub">Günlük ciro, pazaryerine göre</p>
+          <h2>Son 14 gün</h2><p class="sub">Günlük ciro, pazaryerine göre (seçilen bitiş gününe kadar)</p>
           <div class="legend" id="g-trend-legend"></div>
           <div class="chart-wrap short"><div id="g-trend" aria-label="Son 14 gün ciro grafiği"></div></div>
         </div>
         <div class="card">
-          <div class="card-head"><div><h2>Günün siparişleri</h2><p class="sub" id="g-orders-sub"></p></div>
+          <div class="card-head"><div><h2 id="g-orders-title">Günün siparişleri</h2><p class="sub" id="g-orders-sub"></p></div>
             <button class="btn" id="g-csv">Excel'e aktar (CSV)</button></div>
           <div class="table-scroll"><table id="g-orders"></table></div>
           <div class="pager" id="g-pager"></div>
@@ -99,25 +103,16 @@
             <input class="ctl" type="month" id="a-month">
             <button class="btn" id="a-next" aria-label="Sonraki ay">›</button>
           </div>
-          <select class="ctl" id="a-metric" aria-label="Grafik ölçüsü">
-            <option value="total">Ciro</option>
-            <option value="count">Sipariş adedi</option>
-          </select>
         </div>
       </div>
       <div class="kpis" id="a-kpis"></div>
       <div class="grid">
         <div class="card">
-          <h2 id="a-daily-title">Günlük ciro</h2><p class="sub">Ayın her günü, pazaryerine göre</p>
-          <div class="legend" id="a-daily-legend"></div>
-          <div class="chart-wrap"><div id="a-daily" aria-label="Aylık günlük grafik"></div></div>
-        </div>
-        <div class="card">
           <h2>Pazaryeri performansı</h2><p class="sub">Önceki aya göre değişim ile</p>
           <div class="table-scroll"><table id="a-mp"></table></div>
         </div>
         <div class="card span-5">
-          <h2>Sipariş durumları</h2><p class="sub">Ay içindeki tüm siparişler</p>
+          <h2>Sipariş durumları</h2><p class="sub">İade ve iptaller İade &amp; İptal ekranında</p>
           <div class="table-scroll"><table id="a-status"></table></div>
         </div>
         <div class="card span-7">
@@ -164,10 +159,9 @@
           <select class="ctl" id="d-status" aria-label="Durum">
             <option value="">Tüm durumlar</option>
           </select>
-          <label style="display:inline-flex;gap:6px;align-items:center;color:var(--ink-2)"><input type="checkbox" id="d-excl"> İptal/iadeleri ciroya katma</label>
         </div>
         <div class="filterrow"><span class="lbl">Pazaryeri</span><div id="d-mps" class="controls"></div></div>
-        <div class="filterrow"><span class="lbl">Ara</span><input class="ctl search" id="d-q" type="search" placeholder="Sipariş no, ürün adı, stok kodu, şehir, kargo…"></div>
+        <div class="filterrow"><span class="lbl">Ara</span><input class="ctl search" id="d-q" type="search" placeholder="Sipariş no, ürün adı, stok kodu…"></div>
       </div>
       <div class="kpis" id="d-kpis"></div>
       <div class="grid">
@@ -181,7 +175,7 @@
           <div class="chart-wrap"><div id="d-trend" aria-label="Trend grafiği"></div></div>
         </div>
         <div class="card">
-          <h2>Pazaryeri karşılaştırması</h2><p class="sub">Komisyon ve kargo Entegra'dan geliyorsa net tutar hesaplanır</p>
+          <h2>Pazaryeri karşılaştırması</h2><p class="sub">İade ve iptaller hariç</p>
           <div class="table-scroll"><table id="d-mp"></table></div>
         </div>
         <div class="card span-8">
@@ -198,6 +192,70 @@
           <h2>Siparişler</h2><p class="sub" id="d-orders-sub"></p>
           <div class="table-scroll"><table id="d-orders"></table></div>
           <div class="pager" id="d-pager"></div>
+        </div>
+      </div>
+    </section>
+    <!-- İADE & İPTAL -->
+    <section id="view-iade-iptal" class="view hidden">
+      <div class="view-head">
+        <div><h1>İade &amp; İptal</h1><p id="r-sub"></p></div>
+        <div class="controls">
+          <button class="btn" id="r-csv">CSV indir</button>
+        </div>
+      </div>
+      <div class="filterbar">
+        <div class="filterrow">
+          <span class="lbl">Tarih</span>
+          <select class="ctl" id="r-preset" aria-label="Tarih aralığı">
+            <option value="1">Bugün</option>
+            <option value="yesterday">Dün</option>
+            <option value="7">Son 7 gün</option>
+            <option value="30" selected>Son 30 gün</option>
+            <option value="90">Son 90 gün</option>
+            <option value="thisMonth">Bu ay</option>
+            <option value="lastMonth">Geçen ay</option>
+            <option value="thisYear">Bu yıl</option>
+            <option value="all">Tüm veriler</option>
+            <option value="custom">Özel aralık</option>
+          </select>
+          <input class="ctl" type="date" id="r-start" aria-label="Başlangıç">
+          <span class="range-dash">–</span>
+          <input class="ctl" type="date" id="r-end" aria-label="Bitiş">
+          <select class="ctl" id="r-datetype" aria-label="Hangi tarihe göre">
+            <option value="order">Sipariş tarihine göre</option>
+            <option value="changed">İade/iptal tarihine göre</option>
+          </select>
+        </div>
+        <div class="filterrow">
+          <span class="lbl">Tür</span>
+          <div class="controls" id="r-types">
+            <button class="chip" data-t="" aria-pressed="true">Tümü</button>
+            <button class="chip" data-t="iptal" aria-pressed="false">İptal</button>
+            <button class="chip" data-t="iade" aria-pressed="false">İade</button>
+            <button class="chip" data-t="kismi" aria-pressed="false">Kısmi iade</button>
+          </div>
+        </div>
+        <div class="filterrow"><span class="lbl">Pazaryeri</span><div id="r-mps" class="controls"></div></div>
+        <div class="filterrow"><span class="lbl">Ara</span><input class="ctl search" id="r-q" type="search" placeholder="Sipariş no, ürün adı, stok kodu, durum…"></div>
+      </div>
+      <div class="kpis" id="r-kpis"></div>
+      <div class="grid">
+        <div class="card">
+          <h2>Pazaryerine göre</h2><p class="sub" id="r-mp-sub"></p>
+          <div class="table-scroll"><table id="r-mp"></table></div>
+        </div>
+        <div class="card span-7">
+          <h2>En çok iade / iptal edilen ürünler</h2><p class="sub">Kısmi iadelerde yalnızca dönen ürünler sayılır</p>
+          <div class="table-scroll" style="max-height:480px;overflow:auto"><table id="r-products"></table></div>
+        </div>
+        <div class="card span-5">
+          <h2>Durumlar</h2><p class="sub">Entegra'daki durum adlarıyla</p>
+          <div class="table-scroll"><table id="r-status"></table></div>
+        </div>
+        <div class="card">
+          <h2>İade ve iptal edilen siparişler</h2><p class="sub" id="r-orders-sub"></p>
+          <div class="table-scroll"><table id="r-orders"></table></div>
+          <div class="pager" id="r-pager"></div>
         </div>
       </div>
     </section>

@@ -69,7 +69,12 @@ for (let d = new Date(start); d.toISOString().slice(0, 10) <= today; d.setUTCDat
     if (ageDays === 0) status = pickW([{ s: 'Yeni Sipariş', w: 6 }, { s: 'Hazırlanıyor', w: 3 }, { s: 'İptal Edildi', w: 0.3 }]).s;
     else if (ageDays <= 2) status = pickW([{ s: 'Hazırlanıyor', w: 2 }, { s: 'Kargoya Verildi', w: 6 }, { s: 'İptal Edildi', w: 0.4 }]).s;
     else if (ageDays <= 5) status = pickW([{ s: 'Kargoya Verildi', w: 4 }, { s: 'Teslim Edildi', w: 5 }, { s: 'İptal Edildi', w: 0.4 }, { s: 'İade Edildi', w: 0.2 }]).s;
-    else status = pickW([{ s: 'Teslim Edildi', w: 90 }, { s: 'İptal Edildi', w: 4 }, { s: 'İade Edildi', w: mp.name === 'Trendyol' ? 6 : 4 }]).s;
+    else status = pickW([{ s: 'Teslim Edildi', w: 90 }, { s: 'İptal Edildi', w: 4 }, { s: 'İade Edildi', w: mp.name === 'Trendyol' ? 6 : 4 }, { s: 'Kısmi İade Yapıldı', w: lines.length > 1 ? 12 : 0 }]).s;
+    // Ürün satırı durumları: kısmi iadede bir ürün iade edilmiş olur
+    lines.forEach((l) => { l.store_order_status_name = status === 'Kısmi İade Yapıldı' ? 'Teslim Edildi' : status; });
+    if (status === 'Kısmi İade Yapıldı') lines[lines.length - 1].store_order_status_name = 'İade Edildi';
+    const lag = status.includes('İade') ? 4 + Math.floor(rnd() * 12) : status === 'İptal Edildi' ? Math.floor(rnd() * 2) : Math.min(ageDays, 3);
+    const changedAt = new Date(d); changedAt.setUTCDate(changedAt.getUTCDate() + Math.min(lag, ageDays));
     const [y, m, dd] = ymd.split('-');
     raw.push({
       id: id++,
@@ -77,6 +82,7 @@ for (let d = new Date(start); d.toISOString().slice(0, 10) <= today; d.setUTCDat
       supplier: mp.name,
       order_date: `${dd}.${m}.${y} ${String(hr).padStart(2, '0')}:${String(Math.floor(rnd() * 60)).padStart(2, '0')}`,
       status,
+      date_change: `${changedAt.toISOString().slice(0, 10)} ${String(9 + Math.floor(rnd() * 9)).padStart(2, '0')}:${String(Math.floor(rnd() * 60)).padStart(2, '0')}:00`,
       total: +gross.toFixed(2),
       commission: +(gross * mp.com).toFixed(2),
       cargo_price: mp.name === 'E-Ticaret Sitesi' ? 0 : +(gross > 750 ? 0 : 54.99).toFixed(2),

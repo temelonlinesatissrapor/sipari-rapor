@@ -165,3 +165,19 @@ tfoot td { font-weight: 650; border-bottom: 0; border-top: 1px solid var(--axis)
 .tip .tr { display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: center; color: var(--ink-2); padding: 1px 0; }
 .tip .tr b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
 .tip .tot { border-top: 1px solid var(--grid); margin-top: 4px; padding-top: 4px; }
+
+.range-dash { color: var(--muted); padding: 0 6px; align-self: center; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); height: 34px; display: inline-flex; align-items: center; background: var(--surface); }
+.filterrow .range-dash { border: 0; background: none; height: auto; }
+.ret-amt { color: var(--down); }
+.kpi.link { cursor: pointer; }
+.kpi.link:hover { background: var(--surface-2); }
+.pill.kismi { color: var(--down); }
+@media (max-width: 640px) {
+  .view-head .controls { width: 100%; }
+  .stepper { flex-wrap: nowrap; width: 100%; }
+  .stepper .ctl { flex: 1; min-width: 0; padding: 0 6px; }
+}
+@media (max-width: 640px) {
+  .tabs { overflow-x: auto; scrollbar-width: none; }
+  .tab { white-space: nowrap; font-size: 13px; padding: 6px 8px; flex: 1 0 auto; }
+}
