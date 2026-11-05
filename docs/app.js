@@ -118,16 +118,19 @@
   // ---------- Kullanıcılar ----------
   // users.json varsa her kişi kendi kullanıcı adı + şifresiyle girer. Dosyada her kullanıcı için
   // ana veri anahtarı, o kişinin adı+şifresinden türetilen anahtarla şifreli durur.
-  const normUser = (u) => String(u || '').trim().toLocaleLowerCase('tr-TR');
+  const normUser = (u) => String(u || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('tr-TR').replace(/ı/g, 'i').replace(/\s+/g, ' ').trim();
   async function userId(u) {
     const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`siparis-rapor:${normUser(u)}`));
     return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
   }
   async function unlockUser(user, pass) {
     const entry = S.users?.users?.[await userId(user)];
-    if (!entry) throw new Error('kullanıcı yok');
-    const { k, n } = await decrypt(entry, `${normUser(user)}\n${pass}`);
-    return { key: k, name: n };
+    if (!entry) throw Object.assign(new Error('kullanıcı yok'), { reason: 'user' });
+    try {
+      const { k, n } = await decrypt(entry, `${normUser(user)}\n${String(pass).trim()}`);
+      return { key: k, name: n };
+    } catch { throw Object.assign(new Error('şifre'), { reason: 'pass' }); }
   }
   const usersOn = () => Boolean(S.users?.enabled);
 
@@ -151,21 +154,21 @@
     // listeden çıkarılan kişi, kayıtlı girişi olsa bile giremez.
     let saved = null;
     try { saved = JSON.parse(store.get('rapor-giris') || store.get('rapor-giris', true) || 'null'); } catch { saved = null; }
-    if (saved && await tryLogin(saved.u, saved.p)) return;
+    if (saved && (await tryLogin(saved.u, saved.p)) === true) return;
     store.del('rapor-giris'); store.del('rapor-sifre');
     showGate();
   }
 
+  // Başarılıysa true, değilse hata nedenini döndürür: 'user' | 'pass' | 'data'
   async function tryLogin(user, pass) {
-    try {
-      if (usersOn()) {
-        const { key, name } = await unlockUser(user, pass);
-        await openWith(key, name);
-      } else {
-        await openWith(pass, '');
-      }
-      return true;
-    } catch { return false; }
+    let key = pass; let name = '';
+    if (usersOn()) {
+      try { ({ key, name } = await unlockUser(user, pass)); } catch (e) { return e.reason || 'pass'; }
+    }
+    try { await openWith(key, name); return true; } catch (e) {
+      console.error('Veriler açılamadı:', e);
+      return usersOn() ? 'data' : 'pass';
+    }
   }
 
   async function openWith(pass, name) {
@@ -204,10 +207,15 @@
       $('#gate-btn').disabled = true;
       $('#gate-btn').textContent = 'Açılıyor…';
       $('#gate-err').textContent = '';
-      if (await tryLogin(user, pass)) {
+      const res = await tryLogin(user, pass);
+      if (res === true) {
         store.set('rapor-giris', JSON.stringify({ u: user, p: pass }), !$('#gate-remember').checked);
       } else {
-        $('#gate-err').textContent = multi ? 'Kullanıcı adı veya şifre hatalı.' : 'Şifre hatalı.';
+        $('#gate-err').textContent = {
+          user: 'Bu kullanıcı adı tanımlı değil. Yazımı kontrol edin.',
+          pass: multi ? 'Şifre hatalı.' : 'Şifre hatalı.',
+          data: 'Giriş bilgileri doğru ama veriler açılamadı. Ana şifre (DASHBOARD_PASSWORD) değiştirilmiş olabilir.',
+        }[res] || 'Giriş yapılamadı.';
         $('#gate-btn').disabled = false;
         $('#gate-btn').textContent = label;
       }

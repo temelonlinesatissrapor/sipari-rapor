@@ -13,7 +13,9 @@ import { encryptJson } from './store.mjs';
 
 const MIN_PASSWORD = 8;
 
-export const normUser = (u) => String(u || '').trim().toLocaleLowerCase('tr-TR');
+// Kullanıcı adı karşılaştırması esnektir: büyük/küçük harf, Türkçe karakter (ş/s, ı/i, İ/I…) ve fazla boşluk fark etmez
+export const normUser = (u) => String(u || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .toLocaleLowerCase('tr-TR').replace(/ı/g, 'i').replace(/\s+/g, ' ').trim();
 
 export async function userId(username) {
   const data = new TextEncoder().encode(`siparis-rapor:${normUser(username)}`);
@@ -31,7 +33,7 @@ export function parseUsers(text) {
     const at = s.indexOf(':');
     if (at < 1) { problems.push(`${i + 1}. satır "ad:şifre" biçiminde değil`); return; }
     const name = s.slice(0, at).trim();
-    const pass = s.slice(at + 1);
+    const pass = s.slice(at + 1).trim(); // "ahmet : sifre" gibi boşluklu yazımlar da çalışır
     if (pass.length < MIN_PASSWORD) { problems.push(`${i + 1}. satırdaki kullanıcının şifresi ${MIN_PASSWORD} karakterden kısa, atlandı`); return; }
     const key = normUser(name);
     if (seen.has(key)) { problems.push(`${i + 1}. satırdaki kullanıcı adı daha önce yazılmış, bu satır atlandı`); return; }
