@@ -1,1 +1,1 @@
-{"v":1,"enabled":false}
+{"v":1,"enabled":true,"users":{"4e337f1949aa7646cb7c6c2563d303c9":{"v":1,"alg":"AES-GCM/PBKDF2-SHA256","iterations":250000,"salt":"Pbl+CYbpBz6+bKHYo+NfOQ==","iv":"u6QBFZ67H6gRjWHa","data":"wN7woy4EO2oRjd6Psib1R59zDXZ9ZXSb9UF17JxCuGol00yLhVRaq4bzkv7vdSyuILii"},"5e260617493d4bba63bba1df76eea238":{"v":1,"alg":"AES-GCM/PBKDF2-SHA256","iterations":250000,"salt":"raL7iIHZkgDanLBcOEbiaw==","iv":"+3PE6VEi19HZzm/a","data":"qmXtkKSaCESBf+WQNfUK184Dxy8CTX4pfMnBUuoVaOTUXsJxJJKRmJXUBCfsE0jONNBz"}}}
