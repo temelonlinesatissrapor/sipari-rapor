@@ -188,3 +188,7 @@ tfoot td { font-weight: 650; border-bottom: 0; border-top: 1px solid var(--axis)
 td.cust { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 tr.order-cont td.first-of-order { color: transparent; }
 tr.order-start td { border-top: 1px solid var(--axis); }
+
+/* Giriş yapan kullanıcı */
+.gate-card #gate-user { width: 100%; margin-bottom: 10px; }
+.who { font-size: 12.5px; color: var(--ink-2); background: var(--surface-2); border-radius: 999px; padding: 4px 10px; white-space: nowrap; }

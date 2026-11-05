@@ -4,6 +4,7 @@
 // Ortam değişkenleri:
 //   ENTEGRA_EMAIL, ENTEGRA_PASSWORD  (zorunlu) Entegra API kullanıcısı
 //   DASHBOARD_PASSWORD               (önerilir) veri dosyalarını şifreler
+//   DASHBOARD_USERS                  (isteğe bağlı) her satırda ad:şifre — kişiye özel giriş
 //   START_DATE, END_DATE             (isteğe bağlı) YYYY-MM-DD; boşsa son LOOKBACK_DAYS gün
 //   LOOKBACK_DAYS                    (isteğe bağlı) varsayılan 7
 import path from 'node:path';
@@ -11,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { ENTEGRA, DEFAULT_LOOKBACK_DAYS, TIMEZONE, FIELDS } from './config.mjs';
 import { normalizeOrder, extractList, pick, parseDate } from './lib/normalize.mjs';
 import { Store } from './lib/store.mjs';
+import { writeUsers } from './lib/users.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA_DIR = path.join(ROOT, 'docs', 'data');
@@ -152,6 +154,10 @@ async function main() {
   }
   const dashPass = env('DASHBOARD_PASSWORD');
   if (!dashPass) log('⚠ DASHBOARD_PASSWORD tanımlı değil: veriler ŞİFRESİZ kaydedilecek.');
+
+  // Kullanıcı listesi her çalışmada yenilenir (Entegra'ya bağlanılamasa bile)
+  const userCount = await writeUsers(DATA_DIR, process.env.DASHBOARD_USERS || '', dashPass, log);
+  log(userCount ? `Kullanıcı listesi güncellendi: ${userCount} kullanıcı.` : 'Kullanıcı listesi tanımlı değil: rapor şifresiyle giriş yapılır.');
 
   const end = isYmd(env('END_DATE')) ? env('END_DATE') : todayTR();
   const start = isYmd(env('START_DATE')) ? env('START_DATE') : addDays(end, -(DEFAULT_LOOKBACK_DAYS - 1));

@@ -115,6 +115,22 @@
     return out;
   }
 
+  // ---------- Kullanıcılar ----------
+  // users.json varsa her kişi kendi kullanıcı adı + şifresiyle girer. Dosyada her kullanıcı için
+  // ana veri anahtarı, o kişinin adı+şifresinden türetilen anahtarla şifreli durur.
+  const normUser = (u) => String(u || '').trim().toLocaleLowerCase('tr-TR');
+  async function userId(u) {
+    const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`siparis-rapor:${normUser(u)}`));
+    return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+  }
+  async function unlockUser(user, pass) {
+    const entry = S.users?.users?.[await userId(user)];
+    if (!entry) throw new Error('kullanıcı yok');
+    const { k, n } = await decrypt(entry, `${normUser(user)}\n${pass}`);
+    return { key: k, name: n };
+  }
+  const usersOn = () => Boolean(S.users?.enabled);
+
   // ---------- Açılış ----------
   async function boot() {
     applyTheme(store.get('tema'));
@@ -128,47 +144,72 @@
       $('#boot').textContent = 'Henüz sipariş verisi yok. İlk çekimden sonra burada görünecek.';
       return;
     }
-    if (S.manifest.encrypted) {
-      const saved = store.get('rapor-sifre') || store.get('rapor-sifre', true);
-      if (saved && await tryOpen(saved)) return;
-      showGate();
-    } else {
-      await openWith('');
-    }
+    try { S.users = await getJson('data/users.json'); } catch { S.users = null; }
+    if (!S.manifest.encrypted) { await openWith(''); return; }
+
+    // Kayıtlı giriş her açılışta güncel kullanıcı listesine göre yeniden doğrulanır:
+    // listeden çıkarılan kişi, kayıtlı girişi olsa bile giremez.
+    let saved = null;
+    try { saved = JSON.parse(store.get('rapor-giris') || store.get('rapor-giris', true) || 'null'); } catch { saved = null; }
+    if (saved && await tryLogin(saved.u, saved.p)) return;
+    store.del('rapor-giris'); store.del('rapor-sifre');
+    showGate();
   }
 
-  async function tryOpen(pass) {
-    try { await openWith(pass); return true; } catch { return false; }
+  async function tryLogin(user, pass) {
+    try {
+      if (usersOn()) {
+        const { key, name } = await unlockUser(user, pass);
+        await openWith(key, name);
+      } else {
+        await openWith(pass, '');
+      }
+      return true;
+    } catch { return false; }
   }
 
-  async function openWith(pass) {
+  async function openWith(pass, name) {
     const orders = await loadMonths(pass);
     S.password = pass;
+    S.userName = name || '';
     ingest(orders);
     $('#gate').classList.add('hidden');
     $('#boot').classList.add('hidden');
     $('#app').classList.remove('hidden');
     $('#lock-btn').classList.toggle('hidden', !S.manifest.encrypted);
+    if (usersOn()) {
+      $('#lock-btn').title = 'Çıkış yap'; $('#lock-btn').setAttribute('aria-label', 'Çıkış yap');
+    }
+    $('#who').classList.toggle('hidden', !S.userName);
+    $('#who').textContent = S.userName;
     startApp();
   }
 
   function showGate() {
     $('#boot').classList.add('hidden');
     $('#gate').classList.remove('hidden');
-    if (S.manifest.demo) $('#gate-err').innerHTML = '<span style="color:var(--muted)">Örnek veri şifresi: <b>demo</b></span>';
-    $('#gate-pass').focus();
+    const multi = usersOn();
+    $('#gate-user').classList.toggle('hidden', !multi);
+    $('#gate-user').required = multi;
+    $('#gate-pass').placeholder = multi ? 'Şifre' : 'Rapor şifresi';
+    $('#gate-text').textContent = multi ? 'Kullanıcı adınız ve şifrenizle giriş yapın.' : 'Veriler şifreli. Devam etmek için rapor şifresini girin.';
+    $('#gate-btn').textContent = multi ? 'Giriş yap' : 'Aç';
+    if (S.manifest.demo && !multi) $('#gate-err').innerHTML = '<span style="color:var(--muted)">Örnek veri şifresi: <b>demo</b></span>';
+    (multi ? $('#gate-user') : $('#gate-pass')).focus();
     $('#gate-form').onsubmit = async (e) => {
       e.preventDefault();
+      const user = $('#gate-user').value.trim();
       const pass = $('#gate-pass').value;
+      const label = $('#gate-btn').textContent;
       $('#gate-btn').disabled = true;
       $('#gate-btn').textContent = 'Açılıyor…';
       $('#gate-err').textContent = '';
-      if (await tryOpen(pass)) {
-        store.set('rapor-sifre', pass, !$('#gate-remember').checked);
+      if (await tryLogin(user, pass)) {
+        store.set('rapor-giris', JSON.stringify({ u: user, p: pass }), !$('#gate-remember').checked);
       } else {
-        $('#gate-err').textContent = 'Şifre hatalı.';
+        $('#gate-err').textContent = multi ? 'Kullanıcı adı veya şifre hatalı.' : 'Şifre hatalı.';
         $('#gate-btn').disabled = false;
-        $('#gate-btn').textContent = 'Aç';
+        $('#gate-btn').textContent = label;
       }
     };
   }
@@ -247,7 +288,7 @@
       refreshColors();
       render();
     };
-    $('#lock-btn').onclick = () => { store.del('rapor-sifre'); location.reload(); };
+    $('#lock-btn').onclick = () => { store.del('rapor-giris'); store.del('rapor-sifre'); location.reload(); };
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { refreshColors(); render(); });
     window.addEventListener('hashchange', () => go(location.hash.slice(1), true));
     go(location.hash.slice(1) || 'gunluk', true);

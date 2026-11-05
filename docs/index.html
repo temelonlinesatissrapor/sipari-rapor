@@ -15,9 +15,9 @@
   <form class="gate-card" id="gate-form" autocomplete="on">
     <div class="brand-mark" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg></div>
     <h1>Sipariş Raporları</h1>
-    <p>Veriler şifreli. Devam etmek için rapor şifresini girin.</p>
-    <input type="text" name="username" value="rapor" autocomplete="username" class="hidden" aria-hidden="true" tabindex="-1">
-    <input class="ctl" type="password" id="gate-pass" autocomplete="current-password" placeholder="Rapor şifresi" required>
+    <p id="gate-text">Veriler şifreli. Devam etmek için rapor şifresini girin.</p>
+    <input class="ctl hidden" type="text" id="gate-user" name="username" autocomplete="username" placeholder="Kullanıcı adı" autocapitalize="none" spellcheck="false">
+    <input class="ctl" type="password" id="gate-pass" name="password" autocomplete="current-password" placeholder="Rapor şifresi" required>
     <label class="remember"><input type="checkbox" id="gate-remember"> Bu cihazda hatırla</label>
     <button class="btn primary" type="submit" id="gate-btn">Aç</button>
     <div class="err" id="gate-err" role="alert"></div>
@@ -36,6 +36,7 @@
       </nav>
       <span class="spacer"></span>
       <span class="updated" id="updated"></span>
+      <span class="who hidden" id="who"></span>
       <button class="icon-btn" id="theme-btn" title="Açık / koyu tema" aria-label="Tema değiştir">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor"/></svg>
       </button>

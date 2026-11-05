@@ -36,7 +36,8 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 |---|---|
 | `ENTEGRA_EMAIL` | Entegra API kullanıcı e-postası |
 | `ENTEGRA_PASSWORD` | Entegra API şifresi |
-| `DASHBOARD_PASSWORD` | Rapor ekranını açarken kullanacağınız şifre (güçlü bir şifre seçin) |
+| `DASHBOARD_PASSWORD` | Verileri şifreleyen ana şifre (güçlü bir şifre seçin) |
+| `DASHBOARD_USERS` | (İsteğe bağlı) kişiye özel girişler — aşağıdaki **Kullanıcılar** bölümüne bakın |
 
 Bu bilgiler GitHub'da şifreli saklanır, kodda ve kayıtlarda görünmez.
 
@@ -65,6 +66,24 @@ Bundan sonra iş akışı **her gün 06:17 ve 15:17'de** son 7 günü yeniden ç
   - İş akışı kayıtlarına yalnızca alan **adları** yazılır, değerler yazılmaz.
 - Rapor şifresini değiştirirseniz eski dosyalar açılamaz: `docs/data` içini silip 6. adımdaki geçmiş yüklemeyi tekrarlayın.
 - Rapor ekranında "Bu cihazda hatırla" işaretlenirse şifre o tarayıcıda saklanır; ortak bilgisayarda işaretlemeyin. Sağ üstteki kilit simgesi şifreyi unutturur.
+
+## Kullanıcılar
+
+Herkesin kendi kullanıcı adı ve şifresiyle girmesi için **Settings → Secrets and variables → Actions** bölümüne `DASHBOARD_USERS` adında bir secret ekleyin. Her satıra bir kullanıcı yazın:
+
+```
+ahmet:Ahmet-Guclu-Sifre-1
+ayse:Baska.Bir.Sifre.2026
+muhasebe:Muhasebe-Raporu-77
+```
+
+- Kullanıcı adıyla şifre arasında `:` olur. Şifre en az 8 karakter olmalıdır (12+ önerilir).
+- Kullanıcı adında büyük/küçük harf farkı önemli değildir.
+- Liste değişince **Actions → Siparişleri Çek → Run workflow** ile bir kez çalıştırın; değişiklik o anda geçerli olur. Çalıştırmazsanız bir sonraki otomatik çekimde (06:17 / 15:17) geçerli olur.
+- Listeden silinen kişi, "bu cihazda hatırla" demiş olsa bile artık giriş yapamaz.
+- `DASHBOARD_USERS` tanımlıyken rapor şifresi (`DASHBOARD_PASSWORD`) tek başına giriş için kullanılamaz; yalnızca verileri şifreleyen ana anahtar olarak kalır. Kendinizi de listeye ekleyin.
+- Kullanıcı adları ve şifreler repodaki dosyalarda ve Actions kayıtlarında açık halde görünmez.
+- Ayrılan bir çalışanın erişimini **kesin** kapatmak için ayrıca `DASHBOARD_PASSWORD`'ü değiştirin, `docs/data` klasöründeki ay dosyalarını silin ve geçmişi yeniden çekin. (Teknik bilgisi olan biri giriş yaptığı sırada ana anahtarı tarayıcıdan alıp saklamış olabilir.)
 
 ## Alan eşleştirme (gerekirse)
 
