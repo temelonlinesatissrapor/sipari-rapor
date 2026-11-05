@@ -33,6 +33,7 @@
         <button class="tab" role="tab" data-view="aylik">Aylık</button>
         <button class="tab" role="tab" data-view="detay">Detaylı Rapor</button>
         <button class="tab" role="tab" data-view="iade-iptal">İade &amp; İptal</button>
+        <button class="tab" role="tab" data-view="karsilastirma">Karşılaştırma</button>
       </nav>
       <span class="spacer"></span>
       <span class="updated" id="updated"></span>
@@ -268,10 +269,77 @@
         </div>
       </div>
     </section>
+    <!-- KARŞILAŞTIRMA -->
+    <section id="view-karsilastirma" class="view hidden">
+      <div class="view-head">
+        <div><h1>Karşılaştırma</h1><p id="k-sub">Geçmiş yıl ile bu yılın ay ay karşılaştırması</p></div>
+        <div class="controls">
+          <select class="ctl" id="k-base" aria-label="Geçmiş yıl"></select>
+          <span class="range-dash" style="border:0;background:none">ile</span>
+          <select class="ctl" id="k-cur" aria-label="Karşılaştırılan yıl"></select>
+          <button class="btn" id="k-import-btn">Geçmiş yıl ekle</button>
+        </div>
+      </div>
+
+      <div class="card hidden" id="k-import" style="margin-bottom:16px">
+        <div class="card-head">
+          <div><h2>Geçmiş yıl ekle</h2><p class="sub">Aylık özet Excel'inizi seçin. Dosya yalnızca bu tarayıcıda okunur, hiçbir yere gönderilmez.</p></div>
+          <button class="btn" id="k-import-close">Kapat</button>
+        </div>
+        <div class="filterrow" style="margin-bottom:12px">
+          <input class="ctl" type="file" id="k-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="padding-top:5px">
+          <label style="display:inline-flex;gap:8px;align-items:center;color:var(--ink-2)">Yıl <input class="ctl" type="number" id="k-year" min="2000" max="2100" style="width:96px"></label>
+        </div>
+        <div id="k-import-msg"></div>
+        <div class="table-scroll"><table id="k-preview"></table></div>
+        <div id="k-import-actions" class="hidden" style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
+          <button class="btn primary" id="k-download" style="align-self:flex-start">Şifreli dosyayı indir (gecmis.json)</button>
+          <ol class="steps">
+            <li>İnen <b>gecmis.json</b> dosyasını GitHub'da <b>docs/data</b> klasörüne yükleyin (klasöre girip <b>Add file → Upload files</b>).</li>
+            <li>Yayın bitince (1–2 dakika) sayfayı yenileyin; yıl karşılaştırmada görünür.</li>
+          </ol>
+          <p class="sub" style="margin:0">Dosya rapor verileriyle aynı şifreyle şifrelenir; repoda açık halde durmaz. Daha önce eklenen yıllar dosyada korunur.</p>
+        </div>
+      </div>
+
+      <div class="card hidden" id="k-empty">
+        <h2>Henüz geçmiş yıl verisi yok</h2>
+        <p class="sub" style="margin-top:6px">Karşılaştırma için geçmiş yılın aylık özet Excel'ini <b>Geçmiş yıl ekle</b> düğmesiyle ekleyin.</p>
+      </div>
+
+      <div id="k-body" class="hidden">
+        <div class="filterbar">
+          <div class="filterrow"><span class="lbl">Ölçü</span><div class="controls" id="k-metrics"></div></div>
+        </div>
+        <div class="kpis" id="k-kpis"></div>
+        <div class="grid">
+          <div class="card">
+            <h2 id="k-chart-title"></h2><p class="sub" id="k-chart-sub"></p>
+            <div class="legend" id="k-legend"></div>
+            <div class="chart-wrap"><div id="k-chart" aria-label="Yıllar arası karşılaştırma grafiği"></div></div>
+          </div>
+          <div class="card span-6">
+            <h2 id="k-months-title">Ay ay</h2><p class="sub" id="k-months-sub"></p>
+            <div class="table-scroll"><table id="k-months"></table></div>
+          </div>
+          <div class="card span-6">
+            <div class="card-head"><div><h2>Ay özeti</h2><p class="sub">Seçilen ayda tüm ölçüler</p></div>
+              <select class="ctl" id="k-month" aria-label="Ay"></select></div>
+            <div class="table-scroll"><table id="k-summary"></table></div>
+          </div>
+          <div class="card">
+            <h2 id="k-past-title">Geçmiş yıl verileri</h2><p class="sub" id="k-past-sub">Excel'deki tüm ölçüler</p>
+            <div class="table-scroll"><table id="k-past"></table></div>
+          </div>
+        </div>
+        <p class="sub" id="k-notes" style="margin-top:12px"></p>
+      </div>
+    </section>
   </main>
 </div>
 
 <div id="boot" class="loading">Yükleniyor…</div>
+<script src="xlsx-mini.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

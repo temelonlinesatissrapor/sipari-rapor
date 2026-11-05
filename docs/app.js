@@ -80,6 +80,7 @@
     g: { start: null, end: null, page: 0 },
     a: { month: null, list: { month: null, mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 }, src: [] } },
     d: { start: null, end: null, preset: '30', mps: null, status: '', q: '', gran: 'auto', metric: 'total', page: 0, sort: { k: 'date', dir: -1 }, psort: { k: 'total', dir: -1 } },
+    k: { base: null, cur: null, metric: 'sales', month: null, parsed: null },
     r: { start: null, end: null, preset: '30', datetype: 'order', type: '', mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 } },
   };
 
@@ -178,6 +179,7 @@
 
   async function openWith(pass, name) {
     const orders = await loadMonths(pass);
+    await loadHistory(pass);
     S.password = pass;
     S.userName = name || '';
     ingest(orders);
@@ -269,7 +271,7 @@
   }
 
   // ---------- Uygulama ----------
-  const VIEWS = ['gunluk', 'aylik', 'detay', 'iade-iptal'];
+  const VIEWS = ['gunluk', 'aylik', 'detay', 'iade-iptal', 'karsilastirma'];
 
   function startApp() {
     const u = S.manifest.updatedAt ? new Date(S.manifest.updatedAt) : null;
@@ -293,7 +295,7 @@
     applyPreset(S.d, S.d.preset);
     applyPreset(S.r, S.r.preset);
 
-    bindDaily(); bindMonthly(); bindDetail(); bindReturns();
+    bindDaily(); bindMonthly(); bindDetail(); bindReturns(); bindCompare();
     $$('.tab').forEach((b) => b.addEventListener('click', () => go(b.dataset.view)));
     $('#theme-btn').onclick = () => {
       const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -325,6 +327,7 @@
     if (S.view === 'gunluk') renderDaily();
     else if (S.view === 'aylik') renderMonthly();
     else if (S.view === 'detay') renderDetail();
+    else if (S.view === 'karsilastirma') renderCompare();
     else renderReturns();
   }
 
@@ -1081,6 +1084,329 @@
       { key: 'status', label: 'Durum', sort: true, render: rawStatusPill },
     ], pg.rows, { empty: 'Bu filtrelerle iade veya iptal yok.', sort: r.sort, onSort: () => { r.page = 0; renderReturns(); } });
     pager($('#r-pager'), list.length, r, pg, renderReturns, $('#r-orders'));
+  }
+
+  // ---------- KARŞILAŞTIRMA ----------
+  // Geçmiş yıllar Excel'den içe aktarılır ve data/gecmis.json'da şifreli durur.
+  // Bu yıl (ve sipariş verisi olan her yıl) canlı siparişlerden aylık olarak hesaplanır.
+  const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
+  async function encryptJson(obj, password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
+    return { v: 1, alg: 'AES-GCM/PBKDF2-SHA256', iterations: 250000, salt: b64(salt), iv: b64(iv), data: b64(new Uint8Array(data)) };
+  }
+
+  async function loadHistory(pass) {
+    S.history = { years: {} };
+    S.historyState = 'none';
+    let f;
+    try { f = await getJson('data/gecmis.json'); } catch { return; }
+    try {
+      const body = f.alg ? await decrypt(f, pass) : f;
+      S.history = body && body.years ? body : { years: {} };
+      S.historyState = 'ok';
+    } catch { S.historyState = 'unreadable'; }
+  }
+
+  const has = (v) => v !== undefined && v !== null && Number.isFinite(v);
+  const sumOf = (...vals) => (vals.some(has) ? vals.reduce((a, v) => a + (has(v) ? v : 0), 0) : null);
+
+  // past: Excel ayından, cur: canlı ay özetinden değer
+  const COMP = [
+    { k: 'sales', label: 'Satış tutarı', money: true, past: (m) => m.sales, cur: (a) => a.gross },
+    { k: 'net', label: 'Net satış', money: true, past: (m) => (has(m.sales) ? m.sales - (m.return || 0) - (m.cancel || 0) - (m.supplyCancel || 0) : null), cur: (a) => a.net },
+    { k: 'units', label: 'Satılan ürün adedi', past: (m) => m.units, cur: (a) => a.units },
+    { k: 'orders', label: 'Fatura / sipariş adedi', past: (m) => m.invoiceCnt, cur: (a) => a.orders },
+    { k: 'return', label: 'İade tutarı', money: true, past: (m) => m.return, cur: (a) => a.returnAmt },
+    { k: 'returnCnt', label: 'İade adedi', past: (m) => m.returnCnt, cur: (a) => a.returnCnt },
+    { k: 'cancel', label: 'İptal tutarı', money: true, past: (m) => sumOf(m.cancel, m.supplyCancel), cur: (a) => a.cancelAmt },
+    { k: 'cancelCnt', label: 'İptal adedi', past: (m) => sumOf(m.cancelCnt, m.supplyCancelCnt), cur: (a) => a.cancelCnt },
+    { k: 'commission', label: 'Komisyon', money: true, past: (m) => m.commission, cur: (a) => a.commission },
+    { k: 'cargo', label: 'Kargo', money: true, past: (m) => m.cargo, cur: (a) => a.cargo },
+  ];
+  const COMP_NOTES = [
+    '<b>Satış tutarı</b>: geçmiş yılda Excel\'deki satış tutarı; bu yıl iade ve iptaller dahil tüm siparişlerin tutarı.',
+    '<b>Net satış</b>: satış tutarından iade ve iptaller (geçmiş yılda tedarik iptali de) düşülmüş hali; bu yıl diğer ekranlardaki ciroyla aynıdır.',
+    '<b>Fatura / sipariş adedi</b>: geçmiş yılda kesilen fatura adedi; bu yıl iptal edilmeyen sipariş adedi.',
+    '<b>İptal</b>: geçmiş yılda tedarik iptali dahil. <b>İade adedi</b>: bu yıl iade ve kısmi iade olan sipariş sayısı.',
+  ];
+
+  // Canlı siparişlerden yılın aylık özeti
+  function liveYear(year) {
+    const out = {};
+    const today = todayTR();
+    for (let m = 1; m <= 12; m++) {
+      const ym = `${year}-${String(m).padStart(2, '0')}`;
+      const first = `${ym}-01`; const last = `${ym}-${String(daysInMonth(ym)).padStart(2, '0')}`;
+      const list = ordersBetween(first, last);
+      if (!list.length) continue;
+      const ok = sales(list);
+      const rets = list.filter((o) => o.sg === 'iade' || o.sg === 'kismi');
+      const canc = list.filter((o) => o.sg === 'iptal');
+      const from = S.dates[0] > first ? S.dates[0] : first;
+      const to = today < last ? today : last;
+      out[m] = {
+        gross: sum(list, (o) => o.total), net: sum(ok, amt), units: sum(list, (o) => o.qty),
+        orders: list.filter((o) => o.sg !== 'iptal').length,
+        returnAmt: sum(rets, retAmt), returnCnt: rets.length,
+        cancelAmt: sum(canc, (o) => o.total), cancelCnt: canc.length,
+        commission: sum(ok, (o) => o.commission), cargo: sum(ok, (o) => o.cargoPrice),
+        partial: from > first || to < last, days: dayCount(from, to), dim: daysInMonth(ym),
+      };
+    }
+    return out;
+  }
+
+  const liveYears = () => [...new Set(S.dates.map((d) => +d.slice(0, 4)))];
+  const histYears = () => Object.keys(S.history?.years || {}).map(Number);
+  // Bir yılın ölçü değeri: sipariş verisi varsa canlıdan, yoksa Excel'den
+  function yearSource(year) {
+    if (liveYears().includes(year)) return { kind: 'live', months: liveYear(year) };
+    const h = S.history.years[year];
+    return { kind: 'excel', months: h ? h.months : {} };
+  }
+  function val(src, m, metric) {
+    const row = src.months[m];
+    if (!row) return null;
+    const v = src.kind === 'live' ? metric.cur(row) : metric.past(row);
+    return has(v) ? v : null;
+  }
+
+  function bindCompare() {
+    $('#k-import-btn').onclick = () => { $('#k-import').classList.remove('hidden'); $('#k-import').scrollIntoView({ block: 'start', behavior: 'smooth' }); };
+    $('#k-import-close').onclick = () => { $('#k-import').classList.add('hidden'); };
+    $('#k-base').onchange = (e) => { S.k.base = +e.target.value; renderCompare(); };
+    $('#k-cur').onchange = (e) => { S.k.cur = +e.target.value; renderCompare(); };
+    $('#k-month').onchange = (e) => { S.k.month = +e.target.value; renderCompare(); };
+    $('#k-file').onchange = onHistoryFile;
+    $('#k-year').oninput = () => { if (S.k.parsed) S.k.parsed.year = +$('#k-year').value || null; };
+    $('#k-download').onclick = downloadHistory;
+  }
+
+  async function onHistoryFile(e) {
+    const file = e.target.files?.[0];
+    const msg = $('#k-import-msg');
+    $('#k-import-actions').classList.add('hidden');
+    $('#k-preview').innerHTML = '';
+    S.k.parsed = null;
+    if (!file) return;
+    msg.innerHTML = '<p class="sub">Okunuyor…</p>';
+    try {
+      if (!window.MiniXlsx || !('DecompressionStream' in window)) throw new Error('Bu tarayıcı Excel okumayı desteklemiyor. Chrome, Edge veya Firefox\'un güncel sürümünü kullanın.');
+      const grid = await window.MiniXlsx.readXlsx(file);
+      const h = window.MiniXlsx.parseHistory(grid);
+      const fileYear = (file.name.match(/(20\d{2})/) || [])[1];
+      h.year = h.year || (fileYear ? +fileYear : null);
+      S.k.parsed = h;
+      $('#k-year').value = h.year || '';
+      const warn = [...h.warnings];
+      if (S.historyState === 'unreadable') warn.push('Mevcut gecmis.json dosyası şu anki şifreyle açılamadı; indireceğiniz dosya yalnızca bu yılı içerecek.');
+      if (h.year && S.history.years[h.year]) warn.push(`${h.year} yılı zaten ekli; indireceğiniz dosyada yeni hali kullanılacak.`);
+      msg.innerHTML = (warn.length ? `<div class="k-warn">${warn.map(esc).join('<br>')}</div>` : '') +
+        `<p class="sub">${Object.keys(h.months).length} ay, ${Object.keys(h.labels).length} ölçü okundu. Rakamları Excel'inizle kontrol edin:</p>`;
+      pastTable($('#k-preview'), h);
+      $('#k-import-actions').classList.remove('hidden');
+    } catch (err) {
+      msg.innerHTML = `<div class="k-err">${esc(err.message || 'Dosya okunamadı.')}</div>`;
+    }
+  }
+
+  async function downloadHistory() {
+    const h = S.k.parsed;
+    const year = +$('#k-year').value;
+    if (!h) return;
+    if (!year || year < 2000 || year > 2100) { $('#k-import-msg').insertAdjacentHTML('afterbegin', '<div class="k-err">Yılı yazın (ör. 2024).</div>'); return; }
+    const years = S.historyState === 'unreadable' ? {} : { ...(S.history.years || {}) };
+    years[year] = { months: h.months, labels: h.labels, importedAt: new Date().toISOString() };
+    const body = { v: 1, years };
+    const out = S.manifest.encrypted ? await encryptJson(body, S.password) : body;
+    const blob = new Blob([JSON.stringify(out)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'gecmis.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    // Bu oturumda hemen görünsün
+    S.history = body; S.historyState = 'ok';
+    S.k.base = year;
+    renderCompare();
+  }
+
+  // Excel'deki tüm ölçüler: satır = ay
+  function pastTable(el, h) {
+    const keys = Object.keys(h.labels);
+    const money = (k) => !/Cnt$/.test(k) && k !== 'units';
+    const rows = Array.from({ length: 12 }, (_, i) => ({ m: i + 1, ...(h.months[i + 1] || {}) })).filter((r) => Object.keys(r).length > 1);
+    const foot = { m: 'Toplam' };
+    for (const k of keys) foot[k] = money(k) ? tl(sum(rows, (r) => r[k])) : n0(sum(rows, (r) => r[k]));
+    table(el, [
+      { key: 'm', label: 'Ay', render: (r) => MONTHS[r.m - 1] },
+      ...keys.map((k) => ({ key: k, label: esc(h.labels[k]), num: true, render: (r) => (has(r[k]) ? (money(k) ? tl(r[k]) : n0(r[k])) : '—') })),
+    ], rows, { foot });
+  }
+
+  function renderCompare() {
+    const hy = histYears().sort((a, b) => b - a);
+    const ly = liveYears().sort((a, b) => b - a);
+    const all = [...new Set([...ly, ...hy])].sort((a, b) => b - a);
+    if (S.historyState === 'unreadable') showNotice('Geçmiş yıl dosyası (gecmis.json) şu anki şifreyle açılamadı. <b>Geçmiş yıl ekle</b> ile Excel\'i yeniden ekleyin.');
+    const empty = !hy.length;
+    $('#k-empty').classList.toggle('hidden', !empty);
+    $('#k-body').classList.toggle('hidden', empty);
+    if (empty) { $('#k-base').innerHTML = ''; $('#k-cur').innerHTML = ''; return; }
+
+    if (!hy.includes(S.k.base)) S.k.base = hy.find((y) => y < (ly[0] || 9999)) || hy[0];
+    const curOpts = all.filter((y) => y !== S.k.base);
+    if (!curOpts.includes(S.k.cur)) S.k.cur = curOpts[0];
+    $('#k-base').innerHTML = hy.map((y) => `<option value="${y}"${y === S.k.base ? ' selected' : ''}>${y}</option>`).join('');
+    $('#k-cur').innerHTML = curOpts.map((y) => `<option value="${y}"${y === S.k.cur ? ' selected' : ''}>${y}${ly.includes(y) ? '' : ' (Excel)'}</option>`).join('');
+    const A = S.k.base; const B = S.k.cur;
+    if (!B) { $('#k-body').classList.add('hidden'); return; }
+    const sa = yearSource(A); const sb = yearSource(B);
+
+    // Ölçü seçimi: geçmiş yılda değeri olanlar
+    const metrics = COMP.filter((mt) => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].some((m) => val(sa, m, mt) !== null || val(sb, m, mt) !== null));
+    if (!metrics.find((x) => x.k === S.k.metric)) S.k.metric = metrics[0]?.k;
+    const mt = metrics.find((x) => x.k === S.k.metric);
+    $('#k-metrics').innerHTML = metrics.map((x) => `<button class="chip metric" data-k="${x.k}" aria-pressed="${x.k === S.k.metric}">${x.label}</button>`).join('');
+    $$('#k-metrics .chip').forEach((c) => c.addEventListener('click', () => { S.k.metric = c.dataset.k; renderCompare(); }));
+    if (!mt) return;
+    const fmt = mt.money ? tl : n0;
+    const partial = (m) => sb.kind === 'live' && sb.months[m]?.partial;
+    const mark = (m) => (partial(m) ? '*' : '');
+
+    // Karşılaştırılabilir aylar: iki yılda da değeri olan aylar
+    const ms = Array.from({ length: 12 }, (_, i) => i + 1);
+    // Toplamlara yalnızca iki yılda da TAMAMLANMIŞ aylar girer (devam eden ay ayrı kartta tahminle gösterilir)
+    const both = ms.filter((m) => val(sa, m, mt) !== null && val(sb, m, mt) !== null && !partial(m));
+    const tA = sum(both, (m) => val(sa, m, mt)); const tB = sum(both, (m) => val(sb, m, mt));
+    const range = both.length ? (both.length === 1 ? MONTHS[both[0] - 1] : `${MONTHS[both[0] - 1]}–${MONTHS[both[both.length - 1] - 1]} (${both.length} ay)`) : 'tamamlanmış ortak ay yok';
+    const kp = [
+      { k: `${mt.label} · ${B}`, v: fmt(tB), d: both.length ? `${delta(tB, tA)} ${A} aynı aylara göre` : 'karşılaştırılacak tamamlanmış ay yok' },
+      { k: `${mt.label} · ${A}`, v: fmt(tA), d: `karşılaştırılan aylar: ${range}` },
+      { k: `${A} yıl toplamı`, v: fmt(sum(ms, (m) => val(sa, m, mt) || 0)), d: `${ms.filter((m) => val(sa, m, mt) !== null).length} ay` },
+    ];
+    const curM = ms.find((m) => partial(m) && sb.months[m].days >= 1 && `${B}-${String(m).padStart(2, '0')}` === todayTR().slice(0, 7));
+    if (curM && val(sa, curM, mt) !== null) {
+      const r = sb.months[curM];
+      const proj = (val(sb, curM, mt) / r.days) * r.dim;
+      kp.push({ k: `${MONTHS[curM - 1]} ${B} ay sonu tahmini`, v: fmt(proj), d: `${delta(proj, val(sa, curM, mt))} ${MONTHS[curM - 1]} ${A}'e göre · ${r.days}/${r.dim} gün` });
+    }
+    $('#k-kpis').innerHTML = kpiHtml(kp);
+
+    // Grafik
+    $('#k-chart-title').textContent = `${mt.label}: ${A} ve ${B}`;
+    $('#k-chart-sub').textContent = ms.some(partial) ? '* Bu ayın verisi henüz tamamlanmadı' : 'Ay ay';
+    const series = [
+      { label: String(A), color: css('--other'), data: ms.map((m) => val(sa, m, mt)) },
+      { label: String(B), color: css('--s1'), data: ms.map((m) => val(sb, m, mt)) },
+    ];
+    legend($('#k-legend'), series);
+    groupedBar('k-chart', ms.map((m) => `${MONTHS[m - 1].slice(0, 3)}${mark(m)}`), series, { money: mt.money, tooltipTitle: (i) => `${MONTHS[i]}${partial(i + 1) ? ` (devam ediyor: ${sb.months[i + 1].days}/${sb.months[i + 1].dim} gün)` : ''}` });
+
+    // Ay ay tablo
+    $('#k-months-title').textContent = `${mt.label}: ay ay`;
+    $('#k-months-sub').textContent = `${A} ile ${B}`;
+    const rows = ms.map((m) => ({ m, a: val(sa, m, mt), b: val(sb, m, mt) })).filter((r) => r.a !== null || r.b !== null);
+    table($('#k-months'), [
+      { key: 'm', label: 'Ay', render: (r) => `${MONTHS[r.m - 1]}${mark(r.m)}` },
+      { key: 'a', label: String(A), num: true, render: (r) => (r.a !== null ? fmt(r.a) : '—') },
+      { key: 'b', label: String(B), num: true, cls: '', render: (r) => (r.b !== null ? `<span class="${partial(r.m) ? 'partial' : ''}">${fmt(r.b)}</span>` : '—') },
+      { key: 'f', label: 'Fark', num: true, render: (r) => (r.a !== null && r.b !== null ? fmt(r.b - r.a) : '—') },
+      { key: 'd', label: 'Değişim', num: true, render: (r) => (r.a !== null && r.b !== null ? delta(r.b, r.a) || '—' : '—') },
+    ], rows, { foot: both.length ? { m: `Toplam (tamamlanan ${both.length} ay)`, a: fmt(tA), b: fmt(tB), f: fmt(tB - tA), d: delta(tB, tA) } : null });
+
+    // Ay özeti: tüm ölçüler
+    const monthsWith = ms.filter((m) => sb.months[m] || sa.months[m]);
+    if (!monthsWith.includes(S.k.month)) S.k.month = [...monthsWith].reverse().find((m) => sb.months[m] && sa.months[m]) || monthsWith[monthsWith.length - 1];
+    $('#k-month').innerHTML = monthsWith.map((m) => `<option value="${m}"${m === S.k.month ? ' selected' : ''}>${MONTHS[m - 1]}${mark(m)}</option>`).join('');
+    const sm = S.k.month;
+    table($('#k-summary'), [
+      { key: 'l', label: 'Ölçü', render: (r) => r.mt.label },
+      { key: 'a', label: String(A), num: true, render: (r) => (r.a !== null ? (r.mt.money ? tl(r.a) : n0(r.a)) : '—') },
+      { key: 'b', label: `${B}${mark(sm)}`, num: true, render: (r) => (r.b !== null ? (r.mt.money ? tl(r.b) : n0(r.b)) : '—') },
+      { key: 'd', label: 'Değişim', num: true, render: (r) => (r.a !== null && r.b !== null ? delta(r.b, r.a) || '—' : '—') },
+    ], metrics.map((x) => ({ mt: x, a: val(sa, sm, x), b: val(sb, sm, x) })));
+
+    // Geçmiş yılın Excel tablosu
+    const hA = S.history.years[A];
+    $('#k-past-title').textContent = `${A} verileri`;
+    $('#k-past-sub').textContent = 'Excel\'deki tüm ölçüler (komisyon, kargo, gelen para, masraf, ceza dahil)';
+    pastTable($('#k-past'), hA);
+
+    $('#k-sub').textContent = `${A} ile ${B} ay ay${sb.kind === 'live' ? ` · ${B} rakamları Entegra siparişlerinden` : ''}`;
+    $('#k-notes').innerHTML = [...COMP_NOTES, ms.some(partial) ? '* İşaretli aylarda veri henüz tamamlanmadı (ay devam ediyor ya da o ayın başından itibaren sipariş çekilmedi); bu aylar toplamlara katılmaz.' : ''].filter(Boolean).join('<br>');
+  }
+
+  // Gruplu çubuk grafik (iki yıl yan yana)
+  function groupedBar(id, labels, series, opts = {}) {
+    S.charts[id] = { labels, series, opts, grouped: true };
+    drawGrouped(id);
+    const wrap = $(`#${id}`).parentElement;
+    if (!wrap._ro) {
+      let w = wrap.clientWidth;
+      wrap._ro = new ResizeObserver(() => { if (Math.abs(wrap.clientWidth - w) > 4) { w = wrap.clientWidth; drawGrouped(id); } });
+      wrap._ro.observe(wrap);
+    }
+  }
+
+  function drawGrouped(id) {
+    const { labels, series, opts } = S.charts[id];
+    const money = opts.money !== false;
+    const fmt = money ? tl : n0;
+    const holder = $(`#${id}`);
+    const wrap = holder.parentElement;
+    const W = Math.max(280, wrap.clientWidth);
+    const H = wrap.clientHeight || 260;
+    const n = labels.length;
+    const maxV = Math.max(0, ...series.flatMap((s) => s.data.map((v) => v || 0)));
+    const { max, step } = niceMax(maxV);
+    const yl = (v) => (money ? `${fmtCompact.format(v)} ₺` : fmtCompact.format(v));
+    const ticks = []; for (let v = 0; v <= max + 1e-9; v += step) ticks.push(v);
+    const m = { l: Math.max(...ticks.map((t) => yl(t).length)) * 6.6 + 12, r: 6, t: 8, b: 24 };
+    const pw = W - m.l - m.r; const ph = H - m.t - m.b;
+    const band = pw / n;
+    const k = series.length;
+    const bw = Math.max(3, Math.min(22, (band * 0.76 - (k - 1) * 2) / k));
+    const y = (v) => m.t + ph - (v / max) * ph;
+    let s = '';
+    for (const t of ticks) s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${m.l - 8}" y="${y(t) + 4}" text-anchor="end" fill="var(--muted)" font-size="11">${yl(t)}</text>`;
+    s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>`;
+    s += `<rect class="hl" x="0" y="${m.t}" width="${band}" height="${ph}" fill="var(--ink)" opacity="0" rx="4"/>`;
+    for (let i = 0; i < n; i++) {
+      const cx = m.l + band * i + band / 2;
+      const gw = k * bw + (k - 1) * 2;
+      series.forEach((se, j) => {
+        const v = se.data[i];
+        if (!v || v <= 0) return;
+        const x = cx - gw / 2 + j * (bw + 2);
+        const yy = y(v); const h = y(0) - yy;
+        const r = Math.min(4, h, bw / 2);
+        s += `<path d="M${x},${yy + h}V${yy + r}Q${x},${yy} ${x + r},${yy}H${x + bw - r}Q${x + bw},${yy} ${x + bw},${yy + r}V${yy + h}Z" fill="${se.color}"/>`;
+      });
+      s += `<text x="${cx}" y="${H - 6}" text-anchor="middle" fill="var(--muted)" font-size="11">${esc(labels[i])}</text>`;
+    }
+    holder.outerHTML = `<div id="${id}" style="position:relative;height:100%"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" style="display:block;font-family:inherit;touch-action:pan-y">${s}</svg><div class="tip hidden" role="tooltip"></div></div>`;
+    const root = $(`#${id}`); const svg = $('svg', root); const tip = $('.tip', root); const hl = $('.hl', svg);
+    const hide = () => { tip.classList.add('hidden'); hl.setAttribute('opacity', '0'); };
+    const show = (ev) => {
+      const rc = svg.getBoundingClientRect();
+      const i = Math.floor((ev.clientX - rc.left - m.l) / band);
+      if (i < 0 || i >= n) { hide(); return; }
+      hl.setAttribute('x', m.l + band * i); hl.setAttribute('opacity', '0.06');
+      const [a, b] = series.map((se) => se.data[i]);
+      tip.innerHTML = `<div class="tt">${esc(opts.tooltipTitle ? opts.tooltipTitle(i) : labels[i])}</div>` +
+        series.map((se) => `<div class="tr"><span class="sw" style="background:${se.color}"></span><span>${esc(se.label)}</span><b>${has(se.data[i]) ? fmt(se.data[i]) : '—'}</b></div>`).join('') +
+        (has(a) && has(b) ? `<div class="tr tot"><span></span><span>Değişim</span><b>${delta(b, a) || '—'}</b></div>` : '');
+      tip.classList.remove('hidden');
+      const tw = tip.offsetWidth; const cx = m.l + band * i + band / 2;
+      let left = cx + 14; if (left + tw > W) left = cx - tw - 14; if (left < 0) left = 0;
+      tip.style.left = `${left}px`;
+      tip.style.top = `${Math.max(0, Math.min(ev.clientY - rc.top - 20, H - tip.offsetHeight))}px`;
+    };
+    svg.addEventListener('pointermove', show); svg.addEventListener('pointerdown', show); svg.addEventListener('pointerleave', hide);
   }
 
   // ---------- CSV ----------

@@ -85,6 +85,19 @@ muhasebe:Muhasebe-Raporu-77
 - Kullanıcı adları ve şifreler repodaki dosyalarda ve Actions kayıtlarında açık halde görünmez.
 - Ayrılan bir çalışanın erişimini **kesin** kapatmak için ayrıca `DASHBOARD_PASSWORD`'ü değiştirin, `docs/data` klasöründeki ay dosyalarını silin ve geçmişi yeniden çekin. (Teknik bilgisi olan biri giriş yaptığı sırada ana anahtarı tarayıcıdan alıp saklamış olabilir.)
 
+## Geçmiş yıl karşılaştırması
+
+**Karşılaştırma** ekranı, geçmiş bir yılın aylık özetini bu yılın Entegra siparişleriyle ay ay karşılaştırır.
+
+1. Rapor ekranında **Karşılaştırma → Geçmiş yıl ekle** deyin ve aylık özet Excel'inizi seçin. Dosya yalnızca tarayıcıda okunur.
+2. Önizlemedeki rakamları Excel'le kontrol edip **Şifreli dosyayı indir** deyin.
+3. İnen `gecmis.json` dosyasını GitHub'da `docs/data` klasörüne yükleyin.
+
+- **Excel'i GitHub'a doğrudan yüklemeyin**; repo herkese açıktır. `gecmis.json` ise rapor verileriyle aynı şifreyle şifrelidir.
+- Yeni bir yıl eklediğinizde önceki yıllar dosyada korunur; aynı yılı tekrar eklerseniz yeni hali kullanılır.
+- Excel'de ay adları (Ocak … Aralık) bir sütunda alt alta, ölçü başlığı (Satış tutarı, İade, Komisyon…) ay adlarının üstünde olmalıdır. 2024 dosyasındaki düzen bu şekildedir.
+- `DASHBOARD_PASSWORD` değişirse `gecmis.json` açılamaz; Excel'i aynı adımlarla yeniden ekleyin.
+
 ## Alan eşleştirme (gerekirse)
 
 Entegra hesaplarında alan adları farklılık gösterebilir. İlk çalıştırmada Actions kaydında şu satırları göreceksiniz:

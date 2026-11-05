@@ -192,3 +192,10 @@ tr.order-start td { border-top: 1px solid var(--axis); }
 /* Giriş yapan kullanıcı */
 .gate-card #gate-user { width: 100%; margin-bottom: 10px; }
 .who { font-size: 12.5px; color: var(--ink-2); background: var(--surface-2); border-radius: 999px; padding: 4px 10px; white-space: nowrap; }
+
+/* Karşılaştırma */
+.steps { margin: 0; padding-left: 20px; color: var(--ink-2); display: flex; flex-direction: column; gap: 4px; }
+.k-warn { background: var(--warn-bg); border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 10px; }
+.k-err { color: var(--down); font-size: 13px; margin-bottom: 10px; }
+td.partial { color: var(--muted); }
+.chip.metric[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
