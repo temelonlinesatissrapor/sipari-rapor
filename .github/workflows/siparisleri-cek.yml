@@ -37,6 +37,7 @@ jobs:
           ENTEGRA_EMAIL: ${{ secrets.ENTEGRA_EMAIL }}
           ENTEGRA_PASSWORD: ${{ secrets.ENTEGRA_PASSWORD }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          DASHBOARD_USERS: ${{ secrets.DASHBOARD_USERS }}
           START_DATE: ${{ github.event.inputs.start_date }}
           END_DATE: ${{ github.event.inputs.end_date }}
         run: node scripts/fetch-orders.mjs
