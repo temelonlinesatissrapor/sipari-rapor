@@ -31,6 +31,10 @@ export const FIELDS = {
   discount: ['discount', 'coupon_price', 'total_discount'],
   cargo: ['cargo_company', 'cargo', 'shipping_company'],
   city: ['ship_city', 'invoice_city', 'city'],
+  // Müşteri adı (aylık sipariş listesi için). Telefon, e-posta, adres, TC no ALINMAZ.
+  customer: ['ship_fullname', 'invoice_fullname', 'customer_name', 'full_name'],
+  customerFirst: ['firstname', 'first_name'],
+  customerLast: ['lastname', 'last_name'],
   items: ['order_product', 'order_products', 'order_details', 'products', 'items', 'lines'],
   changed: ['date_change', 'updated_at', 'last_update'], // iade/iptal tarihini yaklaşık göstermek için
 };

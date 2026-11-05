@@ -181,3 +181,10 @@ tfoot td { font-weight: 650; border-bottom: 0; border-top: 1px solid var(--axis)
   .tabs { overflow-x: auto; scrollbar-width: none; }
   .tab { white-space: nowrap; font-size: 13px; padding: 6px 8px; flex: 1 0 auto; }
 }
+
+/* Aylık sipariş listesi */
+.list-filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.list-filters .search { width: 100%; }
+td.cust { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+tr.order-cont td.first-of-order { color: transparent; }
+tr.order-start td { border-top: 1px solid var(--axis); }

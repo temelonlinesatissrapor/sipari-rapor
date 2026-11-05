@@ -60,7 +60,8 @@ Bundan sonra iş akışı **her gün 06:17 ve 15:17'de** son 7 günü yeniden ç
 
 - Ücretsiz GitHub Pages için repo **herkese açık** olmalıdır. Bu yüzden:
   - Veri dosyaları `DASHBOARD_PASSWORD` ile **AES-256 şifrelenir**; şifreyi bilmeyen kimse ciro veya sipariş bilgilerini okuyamaz.
-  - **Müşteri adı, telefon, e-posta ve adres hiç kaydedilmez.** Sadece sipariş no, pazaryeri, tarih, tutar, durum, ürünler, kargo firması ve şehir saklanır.
+  - Müşteriden yalnızca **ad soyad** kaydedilir (aylık sipariş listesi için). **Telefon, e-posta, adres ve TC kimlik no kaydedilmez.** Bunun dışında sipariş no, pazaryeri, tarih, tutar, durum, ürünler, kargo firması ve şehir saklanır.
+  - Müşteri adları da şifreli dosyalarda durduğu için `DASHBOARD_PASSWORD` en az 12 karakterli, tahmin edilemeyen bir şifre olmalıdır.
   - İş akışı kayıtlarına yalnızca alan **adları** yazılır, değerler yazılmaz.
 - Rapor şifresini değiştirirseniz eski dosyalar açılamaz: `docs/data` içini silip 6. adımdaki geçmiş yüklemeyi tekrarlayın.
 - Rapor ekranında "Bu cihazda hatırla" işaretlenirse şifre o tarayıcıda saklanır; ortak bilgisayarda işaretlemeyin. Sağ üstteki kilit simgesi şifreyi unutturur.

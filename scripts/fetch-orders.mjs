@@ -77,7 +77,7 @@ async function getToken(email, password) {
 }
 
 // Kontrol için pazaryeri ve durum DEĞERLERİNİ sayılarıyla yazar (kişisel veri içermez)
-const seenSummary = { mp: new Map(), st: new Map(), noItems: 0, total: 0 };
+const seenSummary = { mp: new Map(), st: new Map(), noItems: 0, noCustomer: 0, total: 0 };
 function summarize(raw) {
   for (const o of raw) {
     const n = normalizeOrder(o);
@@ -87,6 +87,7 @@ function summarize(raw) {
     seenSummary.mp.set(mk, (seenSummary.mp.get(mk) || 0) + 1);
     seenSummary.st.set(sk, (seenSummary.st.get(sk) || 0) + 1);
     if (!n.items.length) seenSummary.noItems++;
+    if (!n.customer) seenSummary.noCustomer++;
     seenSummary.total++;
   }
 }
@@ -95,6 +96,7 @@ function printSummary() {
   if (!seenSummary.total) return;
   log(`Pazaryeri eşleştirmesi (Entegra değeri → rapordaki ad):\n${top(seenSummary.mp)}`);
   log(`Durum eşleştirmesi (Entegra değeri → grup):\n${top(seenSummary.st)}`);
+  if (seenSummary.noCustomer) log(`⚠ ${seenSummary.noCustomer}/${seenSummary.total} siparişte müşteri adı boş geldi.`);
   if (seenSummary.noItems) log(`⚠ ${seenSummary.noItems}/${seenSummary.total} siparişte ürün satırı okunamadı.`);
 }
 

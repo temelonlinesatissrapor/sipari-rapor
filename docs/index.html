@@ -111,11 +111,19 @@
           <h2>Pazaryeri performansı</h2><p class="sub">Önceki aya göre değişim ile</p>
           <div class="table-scroll"><table id="a-mp"></table></div>
         </div>
-        <div class="card span-5">
-          <h2>Sipariş durumları</h2><p class="sub">İade ve iptaller İade &amp; İptal ekranında</p>
-          <div class="table-scroll"><table id="a-status"></table></div>
+        <div class="card">
+          <div class="card-head">
+            <div><h2>Sipariş listesi</h2><p class="sub" id="a-list-sub"></p></div>
+            <button class="btn" id="a-list-csv">Excel'e aktar (CSV)</button>
+          </div>
+          <div class="list-filters">
+            <div id="a-list-mps" class="controls"></div>
+            <input class="ctl search" id="a-list-q" type="search" placeholder="Sipariş no, müşteri, ürün adı veya stok kodu ara…">
+          </div>
+          <div class="table-scroll"><table id="a-list"></table></div>
+          <div class="pager" id="a-list-pager"></div>
         </div>
-        <div class="card span-7">
+        <div class="card">
           <h2>Ayın en çok satan ürünleri</h2><p class="sub">Ciroya göre ilk 15</p>
           <div class="table-scroll"><table id="a-products"></table></div>
         </div>

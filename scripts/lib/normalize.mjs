@@ -69,6 +69,13 @@ export function statusGroupOf(raw) {
   return (hit || STATUS_GROUPS[STATUS_GROUPS.length - 1]).key;
 }
 
+// Yalnızca ad soyad alınır; boşlukları toparlar
+function customerOf(o) {
+  let name = pick(o, FIELDS.customer);
+  if (!name) name = [pick(o, FIELDS.customerFirst), pick(o, FIELDS.customerLast)].filter(Boolean).join(' ');
+  return String(name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
 export function normalizeOrder(o) {
   const mpRaw = pick(o, FIELDS.marketplace);
   const mp = marketplaceOf(mpRaw);
@@ -148,6 +155,7 @@ export function normalizeOrder(o) {
     discount: round2(num(pick(o, FIELDS.discount))),
     carrier: String(pick(o, FIELDS.cargo) ?? ''),
     city: String(pick(o, FIELDS.city) ?? ''),
+    customer: customerOf(o),
     qty: items.reduce((a, b) => a + b.qty, 0),
     items: items.map(({ commission, ...rest }) => rest),
   };

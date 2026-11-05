@@ -32,6 +32,8 @@ const PRODUCTS = [
 ].map(([name, price], i) => ({ name, price, sku: `ENT-${String(1001 + i)}`, w: 1 + rnd() * 6 }));
 const CITIES = [['İstanbul', 30], ['Ankara', 11], ['İzmir', 9], ['Bursa', 5], ['Antalya', 4], ['Gaziantep', 3], ['Konya', 3], ['Kocaeli', 3], ['Adana', 3], ['Mersin', 2], ['Kayseri', 2], ['Eskişehir', 2], ['Samsun', 2], ['Diyarbakır', 2], ['Trabzon', 1.5], ['Denizli', 1.5]].map(([n, w]) => ({ n, w }));
 const CARGO = [{ n: 'Trendyol Express', w: 3 }, { n: 'Yurtiçi Kargo', w: 3 }, { n: 'Aras Kargo', w: 2 }, { n: 'MNG Kargo', w: 2 }, { n: 'HepsiJet', w: 2 }, { n: 'Sürat Kargo', w: 1 }];
+const FIRST = ['Ayşe', 'Mehmet', 'Zeynep', 'Ahmet', 'Elif', 'Mustafa', 'Fatma', 'Can', 'Emine', 'Burak', 'Selin', 'Emre', 'Deniz', 'Ece', 'Murat', 'Gizem'];
+const LAST = ['Yılmaz', 'Kaya', 'Demir', 'Şahin', 'Çelik', 'Yıldız', 'Aydın', 'Öztürk', 'Arslan', 'Doğan', 'Kılıç', 'Aslan', 'Koç', 'Kurt'];
 const HOURS = [1, .5, .3, .2, .2, .3, .6, 1.2, 2, 2.6, 3, 3.2, 3.4, 3.3, 3.2, 3.1, 3, 3.1, 3.4, 3.9, 4.4, 4.6, 3.8, 2.2].map((w, h) => ({ h, w }));
 const SEASON = [0.9, 0.8, 0.95, 1, 1.05, 0.95, 0.9, 0.95, 1.05, 1.1, 1.5, 1.25]; // Kasım indirimleri
 
@@ -89,7 +91,8 @@ for (let d = new Date(start); d.toISOString().slice(0, 10) <= today; d.setUTCDat
       cargo: mp.name === 'Trendyol' ? 'Trendyol Express' : mp.name === 'Hepsiburada' ? 'HepsiJet' : pickW(CARGO).n,
       ship_city: pickW(CITIES).n,
       // Kişisel alanlar gerçekte de gelir; normalize adımı bunları atar
-      full_name: 'Örnek Müşteri', email: 'ornek@example.com', mobile_phone: '05000000000', ship_address: 'Örnek adres',
+      // Örnek (uydurma) müşteri adı; telefon/e-posta/adres normalize adımında atılır
+      ship_fullname: `${pick(FIRST)} ${pick(LAST)}`, email: 'ornek@example.com', mobile_phone: '05000000000', ship_address: 'Örnek adres',
       order_details: lines,
     });
   }

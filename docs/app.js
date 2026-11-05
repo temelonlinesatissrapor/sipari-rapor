@@ -78,7 +78,7 @@
     charts: {},
     view: 'gunluk',
     g: { start: null, end: null, page: 0 },
-    a: { month: null },
+    a: { month: null, list: { month: null, mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 }, src: [] } },
     d: { start: null, end: null, preset: '30', mps: null, status: '', q: '', gran: 'auto', metric: 'total', page: 0, sort: { k: 'date', dir: -1 }, psort: { k: 'total', dir: -1 } },
     r: { start: null, end: null, preset: '30', datetype: 'order', type: '', mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 } },
   };
@@ -233,6 +233,7 @@
     S.a.month = day.slice(0, 7);
     S.d.mps = new Set(S.mpOrder);
     S.r.mps = new Set(S.mpOrder);
+    S.a.list.mps = new Set(S.mpOrder);
     applyPreset(S.d, S.d.preset);
     applyPreset(S.r, S.r.preset);
 
@@ -625,6 +626,13 @@
     mi.onchange = () => { if (mi.value) { S.a.month = mi.value; renderMonthly(); } };
     $('#a-prev').onclick = () => { S.a.month = addMonths(S.a.month, -1); renderMonthly(); };
     $('#a-next').onclick = () => { S.a.month = addMonths(S.a.month, 1); renderMonthly(); };
+    let tmr;
+    $('#a-list-q').oninput = (e) => { clearTimeout(tmr); tmr = setTimeout(() => { S.a.list.q = e.target.value.trim(); S.a.list.page = 0; renderMonthList(S.a.list.src); }, 200); };
+    $('#a-list-csv').onclick = () => {
+      const rows = monthListRows(S.a.list.src);
+      download([['Tarih', 'Saat', 'Sipariş No', 'Pazaryeri', 'Müşteri', 'Stok Kodu', 'Ürün', 'Adet', 'Satış Fiyatı', 'Tutar'],
+        ...rows.map((r) => [trDate(r.o.date), r.o.time, r.no, r.mp, r.customer, r.sku, r.name, r.qty, r2(r.price), r2(r.total)])], `siparis-listesi-${S.a.month}`);
+    };
   }
 
   function renderMonthly() {
@@ -676,15 +684,9 @@
     );
     table($('#a-mp'), cols, rows, { foot: rows.length > 1 ? { k: 'Toplam', count: n0(s.count), total: tl(s.total), avg: tl(s.avg), commission: tl(s.commission), prev: tl(p.total), d: delta(s.total, p.total) } : null });
 
-    // Durumlar (yalnızca satışlar)
-    const bySg = groupBy(list, (o) => o.sg);
-    const sRows = Object.keys(STATUS).filter((k) => bySg.has(k)).map((k) => ({ k, count: bySg.get(k).length, total: sum(bySg.get(k), amt), raws: [...new Set(bySg.get(k).map((o) => o.status))].join(', ') }));
-    table($('#a-status'), [
-      { key: 'k', label: 'Durum', render: (r) => `<span class="pill ${r.k}">${STATUS[r.k]}</span>`, title: (r) => `Entegra durumları: ${r.raws}` },
-      { key: 'count', label: 'Sipariş', num: true, render: (r) => n0(r.count) },
-      { key: 'p', label: 'Oran', num: true, render: (r) => pct(r.count / list.length) },
-      { key: 'total', label: 'Tutar', num: true, render: (r) => tl(r.total) },
-    ], sRows);
+    // Sipariş listesi (ürün satırı bazında, pazaryeri filtreli)
+    if (S.a.list.month !== m) { S.a.list.month = m; S.a.list.page = 0; }
+    renderMonthList(list);
 
     // Ürünler
     table($('#a-products'), [
@@ -719,6 +721,56 @@
     const yg = seriesBy(yList, months, (o) => o.date.slice(0, 7), 'total');
     legend($('#a-year-legend'), yg);
     stackedBar('a-year', months.map((x) => `${MONTHS[+x.slice(5, 7) - 1].slice(0, 3)} ${x.slice(2, 4)}`), yg, { tooltipTitle: (i) => trMonth(months[i]) });
+  }
+
+  // Aylık sipariş listesi: her ürün satırı ayrı satır (iade/iptal hariç, kısmi iadede dönen ürünler hariç)
+  function monthListRows(list) {
+    const L = S.a.list;
+    const q = lc(L.q);
+    const rows = [];
+    for (const o of list) {
+      if (!L.mps.has(o.mp)) continue;
+      const its = o.items?.length ? saleItems(o) : [{ sku: '', name: '—', qty: o.qty, total: amt(o) }];
+      for (const it of its) {
+        const r = { o, date: o.date + o.time, no: o.no || o.id, mp: mpLabel(o.mp), customer: o.customer || '', name: it.name, sku: it.sku, qty: it.qty, total: it.total, price: it.qty ? it.total / it.qty : it.total };
+        if (q && ![r.no, r.customer, r.name, r.sku].some((x) => lc(x).includes(q))) continue;
+        rows.push(r);
+      }
+    }
+    const sk = L.sort;
+    rows.sort((a, b) => {
+      const va = a[sk.k]; const vb = b[sk.k];
+      const c = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb), 'tr');
+      return c * sk.dir || a.no.localeCompare(b.no);
+    });
+    return rows;
+  }
+
+  function renderMonthList(list) {
+    const L = S.a.list;
+    mpChips($('#a-list-mps'), L.mps, () => { L.page = 0; renderMonthList(L.src); });
+    L.src = list;
+    const rows = monthListRows(list);
+    const orderCount = new Set(rows.map((r) => r.o.id)).size;
+    const noCustomer = rows.length && rows.every((r) => !r.customer);
+    $('#a-list-sub').textContent = `${n0(orderCount)} sipariş · ${n0(rows.length)} ürün satırı · iade ve iptaller hariç${noCustomer ? ' · müşteri adları bir sonraki sipariş çekiminden sonra görünür' : ''}`;
+    const pg = paged(rows, L);
+    table($('#a-list'), [
+      { key: 'date', label: 'Tarih', sort: true, render: (r) => trDate(r.o.date) },
+      { key: 'no', label: 'Sipariş no', sort: true, render: (r) => esc(r.no) },
+      { key: 'mp', label: 'Pazaryeri', sort: true, render: (r) => mpCell(r.o.mp) },
+      { key: 'customer', label: 'Müşteri', sort: true, cls: 'cust', render: (r) => esc(r.customer || '—'), title: (r) => r.customer },
+      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'qty', label: 'Adet', num: true, sort: true, render: (r) => n0(r.qty) },
+      { key: 'price', label: 'Satış fiyatı', num: true, sort: true, render: (r) => tl2(r.price) },
+      { key: 'total', label: 'Tutar', num: true, sort: true, render: (r) => tl2(r.total) },
+    ], pg.rows, {
+      empty: 'Bu ay seçili pazaryerlerinde sipariş yok.',
+      sort: L.sort,
+      onSort: () => { L.page = 0; renderMonthList(L.src); },
+      foot: rows.length ? { date: 'Toplam', qty: n0(sum(rows, (r) => r.qty)), total: tl2(sum(rows, (r) => r.total)) } : null,
+    });
+    pager($('#a-list-pager'), rows.length, L, pg, () => renderMonthList(L.src), $('#a-list'), 'satır');
   }
 
   // ---------- DETAYLI ----------
