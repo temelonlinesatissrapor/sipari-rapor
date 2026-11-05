@@ -197,7 +197,15 @@ async function main() {
     if (skipped || outside) log(`  ${skipped ? `${skipped} tarihsiz` : ''}${skipped && outside ? ', ' : ''}${outside ? `${outside} aralık dışı` : ''} sipariş atlandı.`);
 
     const month = s.slice(0, 7);
-    const existing = new Map((await store.readMonth(month)).map((o) => [o.id, o]));
+    let previous = [];
+    try {
+      previous = await store.readMonth(month);
+    } catch (err) {
+      if (err.code !== 'DECRYPT') throw err;
+      // Ana şifre değişmiş: eski dosya artık kimse tarafından açılamaz, yeni şifreyle baştan yazılır
+      log(`  ⚠ ${month} eski şifreyle kaydedilmiş; yeni şifreyle baştan yazılıyor. Ayın tamamı için başlangıç tarihini ${month}-01 yapıp çekin.`);
+    }
+    const existing = new Map(previous.map((o) => [o.id, o]));
     for (const o of orders) {
       if (existing.has(o.id)) updated++; else added++;
       existing.set(o.id, o);
@@ -210,7 +218,11 @@ async function main() {
     log(`  ✓ ${month} kaydedildi: ${list.length} sipariş`);
   }
 
-  await store.writeManifest({ lastRun: { start, end, fetched, added, updated } });
+  const manifest = await store.writeManifest({ lastRun: { start, end, fetched, added, updated } });
+  if (manifest.staleMonths?.length) {
+    log(`⚠ Şu aylar eski şifreyle kaydedildiği için raporda gösterilmiyor: ${manifest.staleMonths.join(', ')}`);
+    log(`  Bunları geri getirmek için Run workflow'da başlangıç tarihini ${manifest.staleMonths[0]}-01 yapıp çalıştırın.`);
+  }
   printSummary();
   log(`Bitti: ${added} yeni, ${updated} güncellenen sipariş.`);
 }

@@ -108,10 +108,15 @@
   async function loadMonths(password) {
     const files = await Promise.all(S.manifest.months.map((m) => getJson(`data/${m}.json`)));
     const out = [];
-    for (const f of files) {
-      const body = f.alg ? await decrypt(f, password) : f;
-      out.push(...(body.orders || []));
+    S.unreadable = [];
+    for (const [i, f] of files.entries()) {
+      try {
+        const body = f.alg ? await decrypt(f, password) : f;
+        out.push(...(body.orders || []));
+      } catch { S.unreadable.push(S.manifest.months[i]); }
     }
+    // Hiçbir ay açılamıyorsa şifre/anahtar yanlıştır
+    if (files.length && S.unreadable.length === files.length) throw new Error('veriler açılamadı');
     return out;
   }
 
@@ -273,6 +278,8 @@
       const ageH = (Date.now() - u.getTime()) / 36e5;
       if (ageH > 36 && !S.manifest.demo) showNotice(`Veriler ${Math.floor(ageH / 24)} gündür güncellenmedi. GitHub'da <b>Actions</b> sekmesinden iş akışını kontrol edin.`);
     }
+    const stale = [...(S.manifest.staleMonths || []), ...(S.unreadable || [])];
+    if (stale.length) showNotice(`Şu aylar eski şifreyle kaydedildiği için gösterilemiyor: <b>${[...new Set(stale)].map(trMonth).join(', ')}</b>. GitHub'da <b>Run workflow</b> ile bu ayları yeniden çekin.`);
     if (S.manifest.demo) showNotice('Bu ekran <b>örnek verilerle</b> çalışıyor. Entegra bilgilerinizi GitHub Secrets\'a ekleyip iş akışını çalıştırdığınızda gerçek siparişler gelir.');
 
     const last = S.dates[S.dates.length - 1];

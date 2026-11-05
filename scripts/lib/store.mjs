@@ -40,6 +40,7 @@ export class Store {
   constructor(dir, password) {
     this.dir = dir;
     this.password = password || '';
+    this.readable = new Map(); // ay → mevcut şifreyle açılabiliyor mu (tekrar tekrar çözmemek için)
   }
 
   file(month) {
@@ -53,9 +54,11 @@ export class Store {
     if (raw && raw.alg) {
       if (!this.password) throw new Error(`${month}.json şifreli ama DASHBOARD_PASSWORD tanımlı değil.`);
       try {
-        return (await decryptJson(raw, this.password)).orders || [];
+        const orders = (await decryptJson(raw, this.password)).orders || [];
+        this.readable.set(month, true);
+        return orders;
       } catch {
-        throw new Error(`${month}.json çözülemedi: DASHBOARD_PASSWORD değişmiş olabilir.`);
+        throw Object.assign(new Error(`${month}.json çözülemedi: DASHBOARD_PASSWORD değişmiş olabilir.`), { code: 'DECRYPT' });
       }
     }
     return raw.orders || [];
@@ -65,6 +68,7 @@ export class Store {
     await mkdir(this.dir, { recursive: true });
     const payload = { month, orders };
     const out = this.password ? await encryptJson(payload, this.password) : payload;
+    this.readable.set(month, true);
     await writeFile(this.file(month), JSON.stringify(out));
   }
 
@@ -76,11 +80,24 @@ export class Store {
       .sort();
   }
 
+  // Yalnızca mevcut şifreyle açılabilen aylar rapora alınır; açılamayanlar (eski şifreyle kaydedilmiş) listelenir
+  async readableMonths() {
+    const ok = [];
+    const stale = [];
+    for (const m of await this.months()) {
+      if (this.readable.get(m)) { ok.push(m); continue; }
+      try { await this.readMonth(m); ok.push(m); } catch (e) { if (e.code === 'DECRYPT') stale.push(m); else throw e; }
+    }
+    return { ok, stale };
+  }
+
   async writeManifest(extra = {}) {
+    const { ok, stale } = await this.readableMonths();
     const manifest = {
       updatedAt: new Date().toISOString(),
       encrypted: Boolean(this.password),
-      months: await this.months(),
+      months: ok,
+      ...(stale.length ? { staleMonths: stale } : {}),
       ...extra,
     };
     await writeFile(path.join(this.dir, 'manifest.json'), JSON.stringify(manifest, null, 2));
