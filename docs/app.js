@@ -80,7 +80,7 @@
     g: { start: null, end: null, page: 0 },
     a: { month: null, list: { month: null, mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 }, src: [] } },
     d: { start: null, end: null, preset: '30', mps: null, status: '', q: '', gran: 'auto', metric: 'total', page: 0, sort: { k: 'date', dir: -1 }, psort: { k: 'total', dir: -1 } },
-    k: { base: null, cur: null, metric: 'sales', month: null, parsed: null },
+    k: { years: null, pastYear: null, metric: 'sales', month: null, parsed: null },
     r: { start: null, end: null, preset: '30', datetype: 'order', type: '', mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 } },
   };
 
@@ -1163,23 +1163,30 @@
   const liveYears = () => [...new Set(S.dates.map((d) => +d.slice(0, 4)))];
   const histYears = () => Object.keys(S.history?.years || {}).map(Number);
   // Bir yılın ölçü değeri: sipariş verisi varsa canlıdan, yoksa Excel'den
+  // Her ay için kaynak seçilir: tamamlanmış Entegra ayı > Excel ayı > devam eden Entegra ayı
   function yearSource(year) {
-    if (liveYears().includes(year)) return { kind: 'live', months: liveYear(year) };
-    const h = S.history.years[year];
-    return { kind: 'excel', months: h ? h.months : {} };
+    const live = liveYears().includes(year) ? liveYear(year) : {};
+    const ex = S.history.years[year]?.months || {};
+    const months = {};
+    for (let m = 1; m <= 12; m++) {
+      if (live[m] && !live[m].partial) months[m] = { kind: 'live', row: live[m] };
+      else if (ex[m]) months[m] = { kind: 'excel', row: ex[m] };
+      else if (live[m]) months[m] = { kind: 'live', row: live[m] };
+    }
+    const kinds = new Set(Object.values(months).map((x) => x.kind));
+    return { year, months, hasLive: kinds.has('live'), hasExcel: kinds.has('excel') };
   }
   function val(src, m, metric) {
-    const row = src.months[m];
-    if (!row) return null;
-    const v = src.kind === 'live' ? metric.cur(row) : metric.past(row);
+    const e = src.months[m];
+    if (!e) return null;
+    const v = e.kind === 'live' ? metric.cur(e.row) : metric.past(e.row);
     return has(v) ? v : null;
   }
+  const partialOf = (src, m) => src.months[m]?.kind === 'live' && Boolean(src.months[m].row.partial);
 
   function bindCompare() {
     $('#k-import-btn').onclick = () => { $('#k-import').classList.remove('hidden'); $('#k-import').scrollIntoView({ block: 'start', behavior: 'smooth' }); };
     $('#k-import-close').onclick = () => { $('#k-import').classList.add('hidden'); };
-    $('#k-base').onchange = (e) => { S.k.base = +e.target.value; renderCompare(); };
-    $('#k-cur').onchange = (e) => { S.k.cur = +e.target.value; renderCompare(); };
     $('#k-month').onchange = (e) => { S.k.month = +e.target.value; renderCompare(); };
     $('#k-file').onchange = onHistoryFile;
     $('#k-year').oninput = () => { if (S.k.parsed) S.k.parsed.year = +$('#k-year').value || null; };
@@ -1230,7 +1237,7 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     // Bu oturumda hemen görünsün
     S.history = body; S.historyState = 'ok';
-    S.k.base = year;
+    if (S.k.years) S.k.years.add(year);
     renderCompare();
   }
 
@@ -1247,100 +1254,133 @@
     ], rows, { foot });
   }
 
+  // Yıl renkleri: en yeni yıl mavi, bir önceki turuncu, daha eskiler sırayla
+  const YEAR_COLORS = ['--s1', '--s2', '--s3', '--s4', '--s7', '--s5'];
+
   function renderCompare() {
-    const hy = histYears().sort((a, b) => b - a);
-    const ly = liveYears().sort((a, b) => b - a);
-    const all = [...new Set([...ly, ...hy])].sort((a, b) => b - a);
+    const hy = histYears();
+    const ly = liveYears();
+    const all = [...new Set([...ly, ...hy])].sort((a, b) => a - b); // eskiden yeniye
     if (S.historyState === 'unreadable') showNotice('Geçmiş yıl dosyası (gecmis.json) şu anki şifreyle açılamadı. <b>Geçmiş yıl ekle</b> ile Excel\'i yeniden ekleyin.');
-    const empty = !hy.length;
+    const empty = all.length < 2;
     $('#k-empty').classList.toggle('hidden', !empty);
     $('#k-body').classList.toggle('hidden', empty);
-    if (empty) { $('#k-base').innerHTML = ''; $('#k-cur').innerHTML = ''; return; }
+    if (empty) { $('#k-years').innerHTML = ''; return; }
 
-    if (!hy.includes(S.k.base)) S.k.base = hy.find((y) => y < (ly[0] || 9999)) || hy[0];
-    const curOpts = all.filter((y) => y !== S.k.base);
-    if (!curOpts.includes(S.k.cur)) S.k.cur = curOpts[0];
-    $('#k-base').innerHTML = hy.map((y) => `<option value="${y}"${y === S.k.base ? ' selected' : ''}>${y}</option>`).join('');
-    $('#k-cur').innerHTML = curOpts.map((y) => `<option value="${y}"${y === S.k.cur ? ' selected' : ''}>${y}${ly.includes(y) ? '' : ' (Excel)'}</option>`).join('');
-    const A = S.k.base; const B = S.k.cur;
-    if (!B) { $('#k-body').classList.add('hidden'); return; }
-    const sa = yearSource(A); const sb = yearSource(B);
+    // Seçili yıllar: varsayılan tüm yıllar (en fazla son 4)
+    if (!S.k.years) S.k.years = new Set(all.slice(-4));
+    for (const y of [...S.k.years]) if (!all.includes(y)) S.k.years.delete(y);
+    if (S.k.years.size < 2) S.k.years = new Set(all.slice(-Math.max(2, Math.min(4, all.length))));
+    const years = all.filter((y) => S.k.years.has(y));
+    const color = (y) => css(YEAR_COLORS[(all.length - 1 - all.indexOf(y)) % YEAR_COLORS.length]);
+    const tag = (y) => (hy.includes(y) && ly.includes(y) ? 'Excel + Entegra' : hy.includes(y) ? 'Excel' : 'Entegra');
+    $('#k-years').innerHTML = all.map((y) => `<button class="chip" data-y="${y}" aria-pressed="${S.k.years.has(y)}" title="${tag(y)}"><span class="sw" style="background:${color(y)}"></span>${y}</button>`).join('');
+    $$('#k-years .chip').forEach((c) => c.addEventListener('click', () => {
+      const y = +c.dataset.y;
+      if (S.k.years.has(y)) { if (S.k.years.size <= 2) return; S.k.years.delete(y); } else S.k.years.add(y);
+      renderCompare();
+    }));
 
-    // Ölçü seçimi: geçmiş yılda değeri olanlar
-    const metrics = COMP.filter((mt) => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].some((m) => val(sa, m, mt) !== null || val(sb, m, mt) !== null));
+    const src = new Map(years.map((y) => [y, yearSource(y)]));
+    const ms = Array.from({ length: 12 }, (_, i) => i + 1);
+    const v = (y, m, mt) => val(src.get(y), m, mt);
+    const isPartial = (y, m) => partialOf(src.get(y), m);
+    const anyPartial = (m) => years.some((y) => isPartial(y, m));
+    const mark = (m) => (anyPartial(m) ? '*' : '');
+    const prevOf = (y) => years[years.indexOf(y) - 1];
+
+    // Ölçüler: seçili yıllardan en az birinde değeri olanlar
+    const metrics = COMP.filter((mt) => years.some((y) => ms.some((m) => v(y, m, mt) !== null)));
     if (!metrics.find((x) => x.k === S.k.metric)) S.k.metric = metrics[0]?.k;
     const mt = metrics.find((x) => x.k === S.k.metric);
     $('#k-metrics').innerHTML = metrics.map((x) => `<button class="chip metric" data-k="${x.k}" aria-pressed="${x.k === S.k.metric}">${x.label}</button>`).join('');
     $$('#k-metrics .chip').forEach((c) => c.addEventListener('click', () => { S.k.metric = c.dataset.k; renderCompare(); }));
     if (!mt) return;
     const fmt = mt.money ? tl : n0;
-    const partial = (m) => sb.kind === 'live' && sb.months[m]?.partial;
-    const mark = (m) => (partial(m) ? '*' : '');
 
-    // Karşılaştırılabilir aylar: iki yılda da değeri olan aylar
-    const ms = Array.from({ length: 12 }, (_, i) => i + 1);
-    // Toplamlara yalnızca iki yılda da TAMAMLANMIŞ aylar girer (devam eden ay ayrı kartta tahminle gösterilir)
-    const both = ms.filter((m) => val(sa, m, mt) !== null && val(sb, m, mt) !== null && !partial(m));
-    const tA = sum(both, (m) => val(sa, m, mt)); const tB = sum(both, (m) => val(sb, m, mt));
-    const range = both.length ? (both.length === 1 ? MONTHS[both[0] - 1] : `${MONTHS[both[0] - 1]}–${MONTHS[both[both.length - 1] - 1]} (${both.length} ay)`) : 'tamamlanmış ortak ay yok';
-    const kp = [
-      { k: `${mt.label} · ${B}`, v: fmt(tB), d: both.length ? `${delta(tB, tA)} ${A} aynı aylara göre` : 'karşılaştırılacak tamamlanmış ay yok' },
-      { k: `${mt.label} · ${A}`, v: fmt(tA), d: `karşılaştırılan aylar: ${range}` },
-      { k: `${A} yıl toplamı`, v: fmt(sum(ms, (m) => val(sa, m, mt) || 0)), d: `${ms.filter((m) => val(sa, m, mt) !== null).length} ay` },
-    ];
-    const curM = ms.find((m) => partial(m) && sb.months[m].days >= 1 && `${B}-${String(m).padStart(2, '0')}` === todayTR().slice(0, 7));
-    if (curM && val(sa, curM, mt) !== null) {
-      const r = sb.months[curM];
-      const proj = (val(sb, curM, mt) / r.days) * r.dim;
-      kp.push({ k: `${MONTHS[curM - 1]} ${B} ay sonu tahmini`, v: fmt(proj), d: `${delta(proj, val(sa, curM, mt))} ${MONTHS[curM - 1]} ${A}'e göre · ${r.days}/${r.dim} gün` });
+    // Ortak aylar: seçili yılların HEPSİNDE değeri olan ve hiçbirinde devam etmeyen aylar
+    const common = ms.filter((m) => years.every((y) => v(y, m, mt) !== null) && !anyPartial(m));
+    const range = common.length ? (common.length === 1 ? MONTHS[common[0] - 1] : `${MONTHS[common[0] - 1]}–${MONTHS[common[common.length - 1] - 1]} (${common.length} ay)`) : '';
+    const tot = (y) => sum(common, (m) => v(y, m, mt));
+    const kp = years.slice().reverse().map((y) => {
+      const p = prevOf(y);
+      return {
+        k: `${mt.label} · ${y}`,
+        v: common.length ? fmt(tot(y)) : '—',
+        d: !common.length ? 'tüm yıllarda tamamlanmış ortak ay yok' : p ? `${delta(tot(y), tot(p))} ${p}'e göre · ${range}` : range,
+      };
+    });
+    // Devam eden ay için ay sonu tahmini (en yeni yıl, bir önceki seçili yılın aynı ayına göre)
+    const last = years[years.length - 1]; const prev = prevOf(last);
+    const curM = ms.find((m) => isPartial(last, m) && `${last}-${String(m).padStart(2, '0')}` === todayTR().slice(0, 7));
+    if (curM && prev && v(prev, curM, mt) !== null && !isPartial(prev, curM)) {
+      const r = src.get(last).months[curM].row;
+      const proj = (v(last, curM, mt) / r.days) * r.dim;
+      kp.push({ k: `${MONTHS[curM - 1]} ${last} ay sonu tahmini`, v: fmt(proj), d: `${delta(proj, v(prev, curM, mt))} ${MONTHS[curM - 1]} ${prev}'e göre · ${r.days}/${r.dim} gün` });
     }
     $('#k-kpis').innerHTML = kpiHtml(kp);
 
-    // Grafik
-    $('#k-chart-title').textContent = `${mt.label}: ${A} ve ${B}`;
-    $('#k-chart-sub').textContent = ms.some(partial) ? '* Bu ayın verisi henüz tamamlanmadı' : 'Ay ay';
-    const series = [
-      { label: String(A), color: css('--other'), data: ms.map((m) => val(sa, m, mt)) },
-      { label: String(B), color: css('--s1'), data: ms.map((m) => val(sb, m, mt)) },
-    ];
+    // Grafik: yıllar yan yana
+    $('#k-chart-title').textContent = `${mt.label}: ${years.join(', ')}`;
+    $('#k-chart-sub').textContent = ms.some(anyPartial) ? '* İşaretli ayda verisi henüz tamamlanmamış yıl var' : 'Ay ay';
+    const series = years.map((y) => ({ label: String(y), color: color(y), data: ms.map((m) => v(y, m, mt)) }));
     legend($('#k-legend'), series);
-    groupedBar('k-chart', ms.map((m) => `${MONTHS[m - 1].slice(0, 3)}${mark(m)}`), series, { money: mt.money, tooltipTitle: (i) => `${MONTHS[i]}${partial(i + 1) ? ` (devam ediyor: ${sb.months[i + 1].days}/${sb.months[i + 1].dim} gün)` : ''}` });
+    groupedBar('k-chart', ms.map((m) => `${MONTHS[m - 1].slice(0, 3)}${mark(m)}`), series, {
+      money: mt.money,
+      tooltipTitle: (i) => {
+        const py = years.find((y) => isPartial(y, i + 1));
+        const r = py && src.get(py).months[i + 1].row;
+        return `${MONTHS[i]}${r ? ` (${py} devam ediyor: ${r.days}/${r.dim} gün)` : ''}`;
+      },
+    });
 
-    // Ay ay tablo
+    // Ay ay tablo: her yıl + bir önceki seçili yıla göre değişim
     $('#k-months-title').textContent = `${mt.label}: ay ay`;
-    $('#k-months-sub').textContent = `${A} ile ${B}`;
-    const rows = ms.map((m) => ({ m, a: val(sa, m, mt), b: val(sb, m, mt) })).filter((r) => r.a !== null || r.b !== null);
-    table($('#k-months'), [
-      { key: 'm', label: 'Ay', render: (r) => `${MONTHS[r.m - 1]}${mark(r.m)}` },
-      { key: 'a', label: String(A), num: true, render: (r) => (r.a !== null ? fmt(r.a) : '—') },
-      { key: 'b', label: String(B), num: true, cls: '', render: (r) => (r.b !== null ? `<span class="${partial(r.m) ? 'partial' : ''}">${fmt(r.b)}</span>` : '—') },
-      { key: 'f', label: 'Fark', num: true, render: (r) => (r.a !== null && r.b !== null ? fmt(r.b - r.a) : '—') },
-      { key: 'd', label: 'Değişim', num: true, render: (r) => (r.a !== null && r.b !== null ? delta(r.b, r.a) || '—' : '—') },
-    ], rows, { foot: both.length ? { m: `Toplam (tamamlanan ${both.length} ay)`, a: fmt(tA), b: fmt(tB), f: fmt(tB - tA), d: delta(tB, tA) } : null });
+    $('#k-months-sub').textContent = 'Değişim: bir önceki yıla göre';
+    const cols = [{ key: 'm', label: 'Ay', render: (r) => `${MONTHS[r.m - 1]}${mark(r.m)}` }];
+    years.forEach((y, i) => {
+      cols.push({ key: `y${y}`, label: `<span class="mp-cell"><span class="sw" style="background:${color(y)}"></span>${y}</span>`, num: true, render: (r) => (r[y] !== null ? `<span class="${isPartial(y, r.m) ? 'partial' : ''}">${fmt(r[y])}</span>` : '—') });
+      if (i > 0) { const p = years[i - 1]; cols.push({ key: `d${y}`, label: 'Değişim', num: true, render: (r) => (r[y] !== null && r[p] !== null ? delta(r[y], r[p]) || '—' : '—') }); }
+    });
+    const rows = ms.map((m) => Object.assign({ m }, Object.fromEntries(years.map((y) => [y, v(y, m, mt)])))).filter((r) => years.some((y) => r[y] !== null));
+    const foot = { m: common.length ? `Toplam (ortak ${common.length} ay)` : '' };
+    if (common.length) years.forEach((y, i) => { foot[`y${y}`] = fmt(tot(y)); if (i > 0) foot[`d${y}`] = delta(tot(y), tot(years[i - 1])); });
+    table($('#k-months'), cols, rows, { foot: common.length ? foot : null });
 
-    // Ay özeti: tüm ölçüler
-    const monthsWith = ms.filter((m) => sb.months[m] || sa.months[m]);
-    if (!monthsWith.includes(S.k.month)) S.k.month = [...monthsWith].reverse().find((m) => sb.months[m] && sa.months[m]) || monthsWith[monthsWith.length - 1];
+    // Ay özeti: tüm ölçüler, seçili ay
+    const monthsWith = ms.filter((m) => years.some((y) => src.get(y).months[m]));
+    if (!monthsWith.includes(S.k.month)) S.k.month = [...monthsWith].reverse().find((m) => years.every((y) => src.get(y).months[m])) || monthsWith[monthsWith.length - 1];
     $('#k-month').innerHTML = monthsWith.map((m) => `<option value="${m}"${m === S.k.month ? ' selected' : ''}>${MONTHS[m - 1]}${mark(m)}</option>`).join('');
     const sm = S.k.month;
-    table($('#k-summary'), [
-      { key: 'l', label: 'Ölçü', render: (r) => r.mt.label },
-      { key: 'a', label: String(A), num: true, render: (r) => (r.a !== null ? (r.mt.money ? tl(r.a) : n0(r.a)) : '—') },
-      { key: 'b', label: `${B}${mark(sm)}`, num: true, render: (r) => (r.b !== null ? (r.mt.money ? tl(r.b) : n0(r.b)) : '—') },
-      { key: 'd', label: 'Değişim', num: true, render: (r) => (r.a !== null && r.b !== null ? delta(r.b, r.a) || '—' : '—') },
-    ], metrics.map((x) => ({ mt: x, a: val(sa, sm, x), b: val(sb, sm, x) })));
+    const scols = [{ key: 'l', label: 'Ölçü', render: (r) => r.mt.label }];
+    years.forEach((y, i) => {
+      scols.push({ key: `y${y}`, label: `${y}${isPartial(y, sm) ? '*' : ''}`, num: true, render: (r) => (r[y] !== null ? (r.mt.money ? tl(r[y]) : n0(r[y])) : '—') });
+      if (i > 0) { const p = years[i - 1]; scols.push({ key: `d${y}`, label: 'Değişim', num: true, render: (r) => (r[y] !== null && r[p] !== null ? delta(r[y], r[p]) || '—' : '—') }); }
+    });
+    table($('#k-summary'), scols, metrics.map((x) => Object.assign({ mt: x }, Object.fromEntries(years.map((y) => [y, v(y, sm, x)])))));
 
-    // Geçmiş yılın Excel tablosu
-    const hA = S.history.years[A];
-    $('#k-past-title').textContent = `${A} verileri`;
-    $('#k-past-sub').textContent = 'Excel\'deki tüm ölçüler (komisyon, kargo, gelen para, masraf, ceza dahil)';
-    pastTable($('#k-past'), hA);
+    // Excel tabloları: seçili yıllardan Excel'i olanlar
+    const exYears = years.filter((y) => S.history.years[y]);
+    const pastCard = $('#k-past').closest('.card');
+    pastCard.classList.toggle('hidden', !exYears.length);
+    if (exYears.length) {
+      if (!exYears.includes(S.k.pastYear)) S.k.pastYear = exYears[exYears.length - 1];
+      $('#k-past-title').innerHTML = exYears.length > 1
+        ? `Excel verileri <select class="ctl" id="k-past-year" style="margin-left:8px;height:30px">${exYears.map((y) => `<option value="${y}"${y === S.k.pastYear ? ' selected' : ''}>${y}</option>`).join('')}</select>`
+        : `${S.k.pastYear} Excel verileri`;
+      const sel = $('#k-past-year');
+      if (sel) sel.onchange = (e) => { S.k.pastYear = +e.target.value; renderCompare(); };
+      $('#k-past-sub').textContent = 'Excel\'deki tüm ölçüler (komisyon, kargo, gelen para, masraf, ceza dahil)';
+      pastTable($('#k-past'), S.history.years[S.k.pastYear]);
+    }
 
-    $('#k-sub').textContent = `${A} ile ${B} ay ay${sb.kind === 'live' ? ` · ${B} rakamları Entegra siparişlerinden` : ''}`;
-    $('#k-notes').innerHTML = [...COMP_NOTES, ms.some(partial) ? '* İşaretli aylarda veri henüz tamamlanmadı (ay devam ediyor ya da o ayın başından itibaren sipariş çekilmedi); bu aylar toplamlara katılmaz.' : ''].filter(Boolean).join('<br>');
+    $('#k-sub').textContent = years.map((y) => `${y} (${tag(y)})`).join(' · ');
+    $('#k-notes').innerHTML = [...COMP_NOTES,
+      'Toplamlar ve özet kartlar yalnızca seçili yılların <b>hepsinde</b> tamamlanmış olan ayları içerir.',
+      ms.some(anyPartial) ? '* İşaretli aylarda en az bir yılın verisi tamamlanmadı (ay devam ediyor ya da o ayın başından itibaren sipariş çekilmedi).' : ''].filter(Boolean).join('<br>');
   }
 
-  // Gruplu çubuk grafik (iki yıl yan yana)
+  // Gruplu çubuk grafik (yıllar yan yana)
   function groupedBar(id, labels, series, opts = {}) {
     S.charts[id] = { labels, series, opts, grouped: true };
     drawGrouped(id);
