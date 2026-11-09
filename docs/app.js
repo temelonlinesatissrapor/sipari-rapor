@@ -386,7 +386,9 @@
       return `<th class="${c.num ? 'num' : ''}${s}">${c.label}${arrow}</th>`;
     }).join('');
     const body = rows.map((r) => `<tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''}${c.cls ? ` ${c.cls}` : ''}"${c.title ? ` title="${esc(c.title(r))}"` : ''}>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}</tr>`).join('');
-    const foot = opts.foot ? `<tfoot><tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''}">${opts.foot[c.key] ?? ''}</td>`).join('')}</tr></tfoot>` : '';
+    // foot: tek satır (nesne) ya da birden çok satır (dizi)
+    const feet = opts.foot ? (Array.isArray(opts.foot) ? opts.foot : [opts.foot]) : [];
+    const foot = feet.length ? `<tfoot>${feet.map((f) => `<tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''}">${f[c.key] ?? ''}</td>`).join('')}</tr>`).join('')}</tfoot>` : '';
     el.innerHTML = `<thead><tr>${head}</tr></thead><tbody>${body}</tbody>${foot}`;
     if (sort && opts.onSort) {
       $$('th.sortable', el).forEach((th) => th.addEventListener('click', () => {
@@ -1289,6 +1291,60 @@
     const mark = (m) => (anyPartial(m) ? '*' : '');
     const prevOf = (y) => years[years.indexOf(y) - 1];
 
+    // Ortak hesaplar: yıl toplamı, ortak (hepsinde tamamlanmış) aylar
+    const yearTotal = (y, x) => {
+      const mm = ms.filter((m) => v(y, m, x) !== null);
+      return { total: sum(mm, (m) => v(y, m, x)), n: mm.length, partial: mm.some((m) => isPartial(y, m)) };
+    };
+    const commonOf = (x) => ms.filter((m) => years.every((y) => v(y, m, x) !== null) && !anyPartial(m));
+    const shortRange = (c) => (c.length === 1 ? MONTHS[c[0] - 1] : `${MONTHS[c[0] - 1].slice(0, 3)}–${MONTHS[c[c.length - 1] - 1].slice(0, 3)}`);
+    const tipTitle = (i) => {
+      const py = years.find((y) => isPartial(y, i + 1));
+      const r = py && src.get(py).months[i + 1].row;
+      return `${MONTHS[i]}${r ? ` (${py} devam ediyor: ${r.days}/${r.dim} gün)` : ''}`;
+    };
+    // Alt satırlar: yıl toplamı, ortak aylar toplamı ve bir önceki yıla göre değişim
+    function totalRows(x, keyOf, deltaKeyOf) {
+      const f = x.money ? tl : n0;
+      const r1 = { m: 'Yıl toplamı' };
+      years.forEach((y) => { const t = yearTotal(y, x); r1[keyOf(y)] = t.n ? `${f(t.total)}<small>${t.n} ay${t.partial ? ' *' : ''}</small>` : '—'; });
+      const c = commonOf(x);
+      if (!c.length || years.length < 2) return [r1];
+      const r2 = { m: `Ortak ${c.length} ay <small>${shortRange(c)}</small>` };
+      const r3 = { m: 'Değişim <small>ortak aylarda, önceki yıla göre</small>' };
+      years.forEach((y, i) => {
+        const t = sum(c, (m) => v(y, m, x));
+        r2[keyOf(y)] = f(t);
+        if (i > 0) {
+          const d = delta(t, sum(c, (m) => v(years[i - 1], m, x))) || '—';
+          if (deltaKeyOf) r2[deltaKeyOf(y)] = d; else r3[keyOf(y)] = d;
+        }
+      });
+      return deltaKeyOf ? [r1, r2] : [r1, r2, r3];
+    }
+
+    // Birleşik tablo: Sipariş tutarı, Satılan ürün adedi, Fatura adedi tek tabloda (başlıklar ayrı, altında yıllar)
+    const GROUPS = [
+      { k: 'sales', title: 'Sipariş tutarı' },
+      { k: 'units', title: 'Satılan ürün adedi' },
+      { k: 'orders', title: 'Fatura adedi' },
+    ].map((g) => ({ ...g, mt: COMP.find((x) => x.k === g.k) })).filter((g) => years.some((y) => ms.some((m) => v(y, m, g.mt) !== null)));
+    const swY = (y) => `<span class="sw" style="background:${color(y)}"></span>`;
+    const cellV = (g, y, m) => { const x = v(y, m, g.mt); return x === null ? '—' : `<span class="${isPartial(y, m) ? 'partial' : ''}">${(g.mt.money ? tl : n0)(x)}</span>`; };
+    const mrows = ms.filter((m) => GROUPS.some((g) => years.some((y) => v(y, m, g.mt) !== null)));
+    const footRows = GROUPS.map((g) => totalRows(g.mt, (y) => y));
+    const nFoot = Math.max(...footRows.map((r) => r.length));
+    const footLabels = footRows.find((r) => r.length === nFoot) || [];
+    const thead = `<thead>
+      <tr><th rowspan="2">Ay</th>${GROUPS.map((g, gi) => `<th colspan="${years.length}" class="grp${gi ? ' gsep' : ''}">${g.title}</th>`).join('')}</tr>
+      <tr>${GROUPS.map((g, gi) => years.map((y, yi) => `<th class="num${gi && !yi ? ' gsep' : ''}"><span class="mp-cell">${swY(y)}${y}</span></th>`).join('')).join('')}</tr></thead>`;
+    const tbody = `<tbody>${mrows.map((m) => `<tr><td>${MONTHS[m - 1]}${mark(m)}</td>${GROUPS.map((g, gi) => years.map((y, yi) => `<td class="num${gi && !yi ? ' gsep' : ''}">${cellV(g, y, m)}</td>`).join('')).join('')}</tr>`).join('')}</tbody>`;
+    const tfoot = `<tfoot>${Array.from({ length: nFoot }, (_, ri) => `<tr><td>${footLabels[ri]?.m || ''}</td>${GROUPS.map((g, gi) => years.map((y, yi) => `<td class="num${gi && !yi ? ' gsep' : ''}">${footRows[gi][ri]?.[y] ?? ''}</td>`).join('')).join('')}</tr>`).join('')}</tfoot>`;
+    $('#k-panels').innerHTML = GROUPS.length ? `<div class="card k-combined">
+      <h2>Sipariş tutarı · Satılan ürün adedi · Fatura adedi</h2>
+      <p class="sub">${years.join(' · ')} · ay ay · altta yıl toplamları, ortak ayların toplamı ve önceki yıla göre değişim</p>
+      <div class="table-scroll"><table id="k-combined">${thead}${tbody}${tfoot}</table></div></div>` : '';
+
     // Ölçüler: seçili yıllardan en az birinde değeri olanlar
     const metrics = COMP.filter((mt) => years.some((y) => ms.some((m) => v(y, m, mt) !== null)));
     if (!metrics.find((x) => x.k === S.k.metric)) S.k.metric = metrics[0]?.k;
@@ -1343,9 +1399,7 @@
       if (i > 0) { const p = years[i - 1]; cols.push({ key: `d${y}`, label: 'Değişim', num: true, render: (r) => (r[y] !== null && r[p] !== null ? delta(r[y], r[p]) || '—' : '—') }); }
     });
     const rows = ms.map((m) => Object.assign({ m }, Object.fromEntries(years.map((y) => [y, v(y, m, mt)])))).filter((r) => years.some((y) => r[y] !== null));
-    const foot = { m: common.length ? `Toplam (ortak ${common.length} ay)` : '' };
-    if (common.length) years.forEach((y, i) => { foot[`y${y}`] = fmt(tot(y)); if (i > 0) foot[`d${y}`] = delta(tot(y), tot(years[i - 1])); });
-    table($('#k-months'), cols, rows, { foot: common.length ? foot : null });
+    table($('#k-months'), cols, rows, { foot: totalRows(mt, (y) => `y${y}`, (y) => `d${y}`) });
 
     // Ay özeti: tüm ölçüler, seçili ay
     const monthsWith = ms.filter((m) => years.some((y) => src.get(y).months[m]));

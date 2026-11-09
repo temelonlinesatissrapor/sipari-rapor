@@ -199,3 +199,14 @@ tr.order-start td { border-top: 1px solid var(--axis); }
 .k-err { color: var(--down); font-size: 13px; margin-bottom: 10px; }
 td.partial { color: var(--muted); }
 .chip.metric[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+
+/* Karşılaştırma: birleşik tablo */
+.k-panels { margin-bottom: 24px; }
+.k-combined { grid-column: span 12; }
+.k-combined th.grp { text-align: center; color: var(--ink); font-size: 12.5px; border-bottom: 1px solid var(--grid); }
+.k-combined .gsep { border-left: 1px solid var(--axis); }
+.k-combined thead tr:first-child th { position: static; }
+.k-combined thead tr:nth-child(2) th { position: static; }
+tfoot tr + tr td { border-top: 0; font-weight: 600; color: var(--ink-2); }
+tfoot td small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; }
+.section-title { font-size: 15px; font-weight: 650; margin: 0 0 10px; letter-spacing: -.01em; }
