@@ -2,51 +2,83 @@
 <html lang="tr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#f5f6f8">
 <title>Sipariş Raporları</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M8 22V14M14 22V9M20 22v-6M26 22V12' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="styles.css?v=20261109c">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232457d6'/%3E%3Cpath d='M9 22V15M14.5 22V10M20 22v-5M25.5 22v-9' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css?v=20261110">
 </head>
 <body>
 
-<!-- Şifre ekranı -->
+<!-- Açılış (yüklenirken iskelet görünüm) -->
+<div id="boot" class="boot" aria-busy="true">
+  <div class="sk-side"></div>
+  <div class="sk-main">
+    <div class="sk sk-title"></div>
+    <div class="sk-row"><div class="sk sk-card"></div><div class="sk sk-card"></div><div class="sk sk-card"></div><div class="sk sk-card"></div></div>
+    <div class="sk sk-block"></div>
+    <div class="sk-row"><div class="sk sk-block2"></div><div class="sk sk-block2"></div></div>
+  </div>
+</div>
+
+<!-- Giriş -->
 <section id="gate" class="gate hidden">
+  <div class="gate-art" aria-hidden="true">
+    <div class="gate-art-in">
+      <span class="brand-mark lg"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 16V10M8.5 16V5M13 16v-4M17.5 16V8"/></svg></span>
+      <h2 class="brand-name-text">Sipariş Raporları</h2>
+      <p>Entegra siparişleriniz; günlük, aylık ve pazaryeri bazında tek ekranda.</p>
+    </div>
+  </div>
   <form class="gate-card" id="gate-form" autocomplete="on">
-    <div class="brand-mark" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg></div>
-    <h1>Sipariş Raporları</h1>
+    <span class="brand-mark"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="9" width="11" height="8" rx="1.8"/><path d="M7 9V6.5a3 3 0 0 1 6 0V9"/></svg></span>
+    <h1>Giriş</h1>
     <p id="gate-text">Veriler şifreli. Devam etmek için rapor şifresini girin.</p>
-    <input class="ctl hidden" type="text" id="gate-user" name="username" autocomplete="username" placeholder="Kullanıcı adı" autocapitalize="none" spellcheck="false">
-    <input class="ctl" type="password" id="gate-pass" name="password" autocomplete="current-password" placeholder="Rapor şifresi" required>
+    <label class="field hidden" id="gate-user-field"><span>Kullanıcı adı</span>
+      <input class="ctl hidden" type="text" id="gate-user" name="username" autocomplete="username" placeholder="Kullanıcı adı" autocapitalize="none" spellcheck="false"></label>
+    <label class="field"><span id="gate-pass-label">Şifre</span>
+      <input class="ctl" type="password" id="gate-pass" name="password" autocomplete="current-password" placeholder="Rapor şifresi" required></label>
     <label class="remember"><input type="checkbox" id="gate-remember"> Bu cihazda hatırla</label>
     <button class="btn primary" type="submit" id="gate-btn">Aç</button>
     <div class="err" id="gate-err" role="alert"></div>
   </form>
 </section>
 
-<div id="app" class="hidden">
-  <header class="topbar">
-    <div class="topbar-in">
-      <div class="brand"><span class="brand-mark" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 13V8M7 13V4M11 13V9M15 13V6"/></svg></span>Sipariş Raporları</div>
-      <nav class="tabs" role="tablist">
-        <button class="tab" role="tab" data-view="gunluk">Günlük</button>
-        <button class="tab" role="tab" data-view="aylik">Aylık</button>
-        <button class="tab" role="tab" data-view="detay">Detaylı Rapor</button>
-        <button class="tab" role="tab" data-view="iade-iptal">İade &amp; İptal</button>
-        <button class="tab" role="tab" data-view="karsilastirma">Karşılaştırma</button>
-      </nav>
-      <span class="spacer"></span>
-      <span class="updated" id="updated"></span>
-      <span class="who hidden" id="who"></span>
-      <button class="icon-btn" id="theme-btn" title="Açık / koyu tema" aria-label="Tema değiştir">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor"/></svg>
-      </button>
-      <button class="icon-btn hidden" id="lock-btn" title="Kilitle" aria-label="Kilitle">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>
-      </button>
+<div id="app" class="app hidden">
+  <aside class="sidebar" id="sidebar" aria-label="Menü">
+    <div class="brand">
+      <span class="brand-mark"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 16V10M8.5 16V5M13 16v-4M17.5 16V8"/></svg></span>
+      <div class="brand-txt"><b class="brand-name-text">Sipariş Raporları</b><small>Entegra pazaryeri raporları</small></div>
     </div>
-  </header>
+    <nav class="nav" role="tablist" aria-label="Raporlar">
+      <span class="nav-label">Satış</span>
+      <button class="tab" role="tab" data-view="gunluk"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2.5v3M13 2.5v3"/><path d="M7 12h2"/></svg><span>Günlük</span></button>
+      <button class="tab" role="tab" data-view="aylik"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2.5v3M13 2.5v3M6.5 11h1M9.5 11h1M12.5 11h1M6.5 14h1M9.5 14h1"/></svg><span>Aylık</span></button>
+      <button class="tab" role="tab" data-view="detay"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 16.5h14"/><path d="M5 13l3.5-4 3 2.5L16 5.5"/></svg><span>Detaylı Rapor</span></button>
+      <span class="nav-label">Takip</span>
+      <button class="tab" role="tab" data-view="iade-iptal"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 6H13a4 4 0 0 1 0 8H6"/><path d="M9.5 3.5L7 6l2.5 2.5"/></svg><span>İade &amp; İptal</span></button>
+      <button class="tab" role="tab" data-view="karsilastirma"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 16V8M10 16V4M15 16v-6"/><path d="M3 16.5h14"/></svg><span>Karşılaştırma</span></button>
+    </nav>
+    <div class="side-foot">
+      <div class="side-user"><span class="avatar" id="who-avatar" aria-hidden="true"></span><div><b class="who hidden" id="who"></b><small class="updated" id="updated"></small></div></div>
+      <div class="side-actions">
+        <button class="icon-btn" id="theme-btn" title="Açık / koyu tema" aria-label="Tema değiştir"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 11.5A6.5 6.5 0 0 1 8.5 4a6.5 6.5 0 1 0 7.5 7.5z"/></svg></button>
+        <button class="icon-btn hidden" id="lock-btn" title="Kilitle" aria-label="Kilitle"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4h3a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 15 16h-3"/><path d="M8.5 13.5L12 10 8.5 6.5M12 10H3.5"/></svg></button>
+      </div>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
 
+  <div class="main-wrap">
+    <header class="mobilebar">
+      <button class="icon-btn" id="menu-btn" aria-label="Menüyü aç" aria-controls="sidebar" aria-expanded="false"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6h13M3.5 10h13M3.5 14h13"/></svg></button>
+      <span class="brand-mark sm"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 16V10M8.5 16V5M13 16v-4M17.5 16V8"/></svg></span>
+      <b class="brand-name-text">Sipariş Raporları</b>
+    </header>
   <main>
     <div id="notice" class="notice hidden"></div>
 
@@ -68,28 +100,32 @@
       </div>
       <div class="kpis" id="g-kpis"></div>
       <div class="grid">
-        <div class="card span-7">
-          <h2>Pazaryeri dağılımı</h2><p class="sub">İade ve iptaller hariç</p>
+        <div class="card span-8">
+          <div class="card-head"><div><h2>Pazaryeri dağılımı</h2><p class="sub">İade ve iptaller hariç</p></div></div>
           <div class="table-scroll"><table id="g-mp"></table></div>
+        </div>
+        <div class="card span-4">
+          <h2>Pazaryeri payı</h2><p class="sub">Ciroya göre</p>
+          <div id="g-donut" class="donut-wrap"></div>
+        </div>
+        <div class="card span-7">
+          <h2>Son 14 gün</h2><p class="sub">Günlük ciro, pazaryerine göre (seçilen bitiş gününe kadar)</p>
+          <div class="legend" id="g-trend-legend"></div>
+          <div class="chart-wrap short"><div id="g-trend" aria-label="Son 14 gün ciro grafiği"></div></div>
         </div>
         <div class="card span-5">
           <h2>Saatlik sipariş</h2><p class="sub" id="g-hour-sub">Pazaryerine göre sipariş sayısı</p>
           <div class="legend" id="g-hour-legend"></div>
           <div class="chart-wrap short"><div id="g-hour" aria-label="Saatlik sipariş grafiği"></div></div>
         </div>
-        <div class="card span-6">
+        <div class="card">
           <h2 id="g-products-title">Günün en çok satanları</h2><p class="sub">Adede göre</p>
           <div class="table-scroll"><table id="g-products"></table></div>
         </div>
-        <div class="card span-6">
-          <h2>Son 14 gün</h2><p class="sub">Günlük ciro, pazaryerine göre (seçilen bitiş gününe kadar)</p>
-          <div class="legend" id="g-trend-legend"></div>
-          <div class="chart-wrap short"><div id="g-trend" aria-label="Son 14 gün ciro grafiği"></div></div>
-        </div>
         <div class="card">
           <div class="card-head"><div><h2 id="g-orders-title">Günün siparişleri</h2><p class="sub" id="g-orders-sub"></p></div>
-            <button class="btn" id="g-csv">Excel'e aktar (CSV)</button></div>
-          <div class="table-scroll"><table id="g-orders"></table></div>
+            <button class="btn" id="g-csv"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10M6 9l4 4 4-4M4 16.5h12"/></svg>Excel'e aktar</button></div>
+          <div class="table-scroll tall"><table id="g-orders"></table></div>
           <div class="pager" id="g-pager"></div>
         </div>
       </div>
@@ -116,13 +152,13 @@
         <div class="card">
           <div class="card-head">
             <div><h2>Sipariş listesi</h2><p class="sub" id="a-list-sub"></p></div>
-            <button class="btn" id="a-list-csv">Excel'e aktar (CSV)</button>
+            <button class="btn" id="a-list-csv"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10M6 9l4 4 4-4M4 16.5h12"/></svg>Excel'e aktar</button>
           </div>
           <div class="list-filters">
             <div id="a-list-mps" class="controls"></div>
             <input class="ctl search" id="a-list-q" type="search" placeholder="Sipariş no, müşteri, ürün adı veya stok kodu ara…">
           </div>
-          <div class="table-scroll"><table id="a-list"></table></div>
+          <div class="table-scroll tall"><table id="a-list"></table></div>
           <div class="pager" id="a-list-pager"></div>
         </div>
         <div class="card">
@@ -146,8 +182,8 @@
       <div class="view-head">
         <div><h1>Detaylı Rapor</h1><p id="d-sub"></p></div>
         <div class="controls">
-          <button class="btn" id="d-csv">Siparişleri CSV indir</button>
-          <button class="btn" id="d-csv-products">Ürünleri CSV indir</button>
+          <button class="btn" id="d-csv"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10M6 9l4 4 4-4M4 16.5h12"/></svg>Siparişler</button>
+          <button class="btn" id="d-csv-products"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10M6 9l4 4 4-4M4 16.5h12"/></svg>Ürünler</button>
         </div>
       </div>
       <div class="filterbar">
@@ -184,9 +220,17 @@
           <div class="legend" id="d-trend-legend"></div>
           <div class="chart-wrap"><div id="d-trend" aria-label="Trend grafiği"></div></div>
         </div>
-        <div class="card">
+        <div class="card span-8">
           <h2>Pazaryeri karşılaştırması</h2><p class="sub">İade ve iptaller hariç</p>
           <div class="table-scroll"><table id="d-mp"></table></div>
+        </div>
+        <div class="card span-4">
+          <h2>Pazaryeri payı</h2><p class="sub">Ciroya göre</p>
+          <div id="d-donut" class="donut-wrap"></div>
+        </div>
+        <div class="card">
+          <h2>Gün ve saat yoğunluğu</h2><p class="sub">Ortalama sipariş sayısı · koyu renk daha yoğun</p>
+          <div class="table-scroll"><div id="d-heat" class="heat"></div></div>
         </div>
         <div class="card span-8">
           <div class="card-head"><div><h2>Ürün performansı</h2><p class="sub">Pazaryeri kırılımıyla, başlığa tıklayarak sıralayın</p></div></div>
@@ -200,7 +244,7 @@
         </div>
         <div class="card">
           <h2>Siparişler</h2><p class="sub" id="d-orders-sub"></p>
-          <div class="table-scroll"><table id="d-orders"></table></div>
+          <div class="table-scroll tall"><table id="d-orders"></table></div>
           <div class="pager" id="d-pager"></div>
         </div>
       </div>
@@ -210,7 +254,7 @@
       <div class="view-head">
         <div><h1>İade &amp; İptal</h1><p id="r-sub"></p></div>
         <div class="controls">
-          <button class="btn" id="r-csv">CSV indir</button>
+          <button class="btn" id="r-csv"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10M6 9l4 4 4-4M4 16.5h12"/></svg>Excel'e aktar</button>
         </div>
       </div>
       <div class="filterbar">
@@ -264,7 +308,7 @@
         </div>
         <div class="card">
           <h2>İade ve iptal edilen siparişler</h2><p class="sub" id="r-orders-sub"></p>
-          <div class="table-scroll"><table id="r-orders"></table></div>
+          <div class="table-scroll tall"><table id="r-orders"></table></div>
           <div class="pager" id="r-pager"></div>
         </div>
       </div>
@@ -275,7 +319,7 @@
         <div><h1>Karşılaştırma</h1><p id="k-sub">Geçmiş yıl ile bu yılın ay ay karşılaştırması</p></div>
         <div class="controls">
           <div class="controls" id="k-years" aria-label="Karşılaştırılan yıllar"></div>
-          <button class="btn" id="k-import-btn">Geçmiş yıl ekle</button>
+          <button class="btn" id="k-import-btn"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>Geçmiş yıl ekle</button>
         </div>
       </div>
 
@@ -336,10 +380,16 @@
       </div>
     </section>
   </main>
+  </div>
 </div>
 
-<div id="boot" class="loading">Yükleniyor…</div>
-<script src="xlsx-mini.js?v=20261109c"></script>
-<script src="app.js?v=20261109c"></script>
+<aside class="drawer" id="drawer" aria-label="Sipariş detayı" aria-hidden="true">
+  <div class="drawer-head"><div><small id="dr-mp"></small><h2 id="dr-title">Sipariş</h2></div>
+    <button class="icon-btn" id="dr-close" aria-label="Kapat"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg></button></div>
+  <div class="drawer-body" id="dr-body"></div>
+</aside>
+
+<script src="xlsx-mini.js?v=20261110"></script>
+<script src="app.js?v=20261110"></script>
 </body>
 </html>

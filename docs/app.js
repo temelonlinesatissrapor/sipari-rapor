@@ -2,6 +2,9 @@
 (() => {
   'use strict';
 
+  // Firma adı: sol üstte ve giriş ekranında görünür. Boş bırakılırsa "Sipariş Raporları" yazar.
+  const FIRMA_ADI = '';
+
   // ---------- Yardımcılar ----------
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -141,16 +144,19 @@
   const usersOn = () => Boolean(S.users?.enabled);
 
   // ---------- Açılış ----------
+  function bootMsg(html) { const b = $('#boot'); b.className = 'boot msg'; b.removeAttribute('aria-busy'); b.innerHTML = `<p>${html}</p>`; }
+
   async function boot() {
     applyTheme(store.get('tema'));
+    if (FIRMA_ADI) { $$('.brand-name-text').forEach((e) => { e.textContent = FIRMA_ADI; }); document.title = `${FIRMA_ADI} · Sipariş Raporları`; }
     try {
       S.manifest = await getJson('data/manifest.json');
     } catch {
-      $('#boot').innerHTML = 'Henüz veri yok. GitHub Actions\'taki <b>Siparişleri Çek</b> iş akışını çalıştırın.';
+      bootMsg('Henüz veri yok. GitHub Actions\'taki <b>Siparişleri Çek</b> iş akışını çalıştırın.');
       return;
     }
     if (!S.manifest.months?.length) {
-      $('#boot').textContent = 'Henüz sipariş verisi yok. İlk çekimden sonra burada görünecek.';
+      bootMsg('Henüz sipariş verisi yok. İlk çekimden sonra burada görünecek.');
       return;
     }
     try { S.users = await getJson('data/users.json'); } catch { S.users = null; }
@@ -192,6 +198,7 @@
     }
     $('#who').classList.toggle('hidden', !S.userName);
     $('#who').textContent = S.userName;
+    $('#who-avatar').textContent = S.userName ? S.userName.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toLocaleUpperCase('tr-TR') : '';
     startApp();
   }
 
@@ -200,8 +207,10 @@
     $('#gate').classList.remove('hidden');
     const multi = usersOn();
     $('#gate-user').classList.toggle('hidden', !multi);
+    $('#gate-user-field').classList.toggle('hidden', !multi);
     $('#gate-user').required = multi;
-    $('#gate-pass').placeholder = multi ? 'Şifre' : 'Rapor şifresi';
+    $('#gate-pass').placeholder = multi ? 'Şifreniz' : 'Rapor şifresi';
+    $('#gate-pass-label').textContent = multi ? 'Şifre' : 'Rapor şifresi';
     $('#gate-text').textContent = multi ? 'Kullanıcı adınız ve şifrenizle giriş yapın.' : 'Veriler şifreli. Devam etmek için rapor şifresini girin.';
     $('#gate-btn').textContent = multi ? 'Giriş yap' : 'Aç';
     if (S.manifest.demo && !multi) $('#gate-err').innerHTML = '<span style="color:var(--muted)">Örnek veri şifresi: <b>demo</b></span>';
@@ -236,6 +245,7 @@
     S.byDate = groupBy(S.orders, (o) => o.date);
     S.dates = [...S.byDate.keys()].sort();
     S.retOrders = S.orders.filter(isRet);
+    S.byId = new Map(S.orders.map((o) => [String(o.id), o]));
 
     // Renk, pazaryerine bağlıdır (sıraya değil): tüm verideki ciroya göre sabit atanır
     const totals = new Map();
@@ -276,7 +286,7 @@
   function startApp() {
     const u = S.manifest.updatedAt ? new Date(S.manifest.updatedAt) : null;
     if (u) {
-      $('#updated').textContent = `Son güncelleme: ${u.toLocaleString('tr-TR', { dateStyle: 'medium', timeStyle: 'short' })}`;
+      $('#updated').textContent = `Güncellendi: ${u.toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
       const ageH = (Date.now() - u.getTime()) / 36e5;
       if (ageH > 36 && !S.manifest.demo) showNotice(`Veriler ${Math.floor(ageH / 24)} gündür güncellenmedi. GitHub'da <b>Actions</b> sekmesinden iş akışını kontrol edin.`);
     }
@@ -296,7 +306,16 @@
     applyPreset(S.r, S.r.preset);
 
     bindDaily(); bindMonthly(); bindDetail(); bindReturns(); bindCompare();
-    $$('.tab').forEach((b) => b.addEventListener('click', () => go(b.dataset.view)));
+    $$('.tab').forEach((b) => b.addEventListener('click', () => { go(b.dataset.view); setMenu(false); }));
+    $('#menu-btn').onclick = () => setMenu(!$('#app').classList.contains('menu-open'));
+    $('#scrim').onclick = () => { setMenu(false); closeOrder(); };
+    $('#dr-close').onclick = closeOrder;
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeOrder(); setMenu(false); } });
+    // Sipariş satırına tıklayınca detay paneli
+    document.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr[data-oid]');
+      if (tr && !e.target.closest('a, button')) openOrder(tr.dataset.oid);
+    });
     $('#theme-btn').onclick = () => {
       const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
       const next = cur === 'dark' ? 'light' : 'dark';
@@ -308,7 +327,13 @@
     $('#lock-btn').onclick = () => { store.del('rapor-giris'); store.del('rapor-sifre'); location.reload(); };
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { refreshColors(); render(); });
     window.addEventListener('hashchange', () => go(location.hash.slice(1), true));
-    go(location.hash.slice(1) || 'gunluk', true);
+    go(location.hash.slice(1) || store.get('son-ekran') || 'gunluk', true);
+  }
+
+  function setMenu(open) {
+    $('#app').classList.toggle('menu-open', open);
+    $('#menu-btn').setAttribute('aria-expanded', String(open));
+    $('#scrim').hidden = !open && !$('#drawer').classList.contains('open');
   }
 
   function showNotice(html) { const n = $('#notice'); n.innerHTML = html; n.classList.remove('hidden'); }
@@ -320,6 +345,7 @@
     if (!fromHash && location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`);
     $$('.tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === view)));
     $$('.view').forEach((v) => v.classList.toggle('hidden', v.id !== `view-${view}`));
+    store.set('son-ekran', view);
     render();
   }
 
@@ -372,8 +398,30 @@
     return limit ? rows.slice(0, limit) : rows;
   }
 
+  // Küçük seyir eğrisi (özet kartlarında): son noktayı vurgular
+  function sparkSvg(vals) {
+    const v = (vals || []).map((x) => (Number.isFinite(x) ? x : 0));
+    if (v.length < 2 || !v.some((x) => x > 0)) return '';
+    const W = 92; const H = 38; const p = 3;
+    const max = Math.max(...v); const min = Math.min(...v, 0);
+    const xs = (i) => p + (i * (W - 2 * p)) / (v.length - 1);
+    const ys = (x) => H - p - ((x - min) / (max - min || 1)) * (H - 2 * p);
+    const pts = v.map((x, i) => `${xs(i).toFixed(1)},${ys(x).toFixed(1)}`);
+    const last = v.length - 1;
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="M${pts[0]} L${pts.join(' L')} L${xs(last)},${H - p} L${xs(0)},${H - p} Z" fill="var(--accent)" opacity=".08"/>`
+      + `<polyline points="${pts.join(' ')}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>`
+      + `<circle cx="${xs(last)}" cy="${ys(v[last])}" r="2.6" fill="var(--accent)" stroke="var(--surface)" stroke-width="1.5"/></svg>`;
+  }
   function kpiHtml(items) {
-    return items.map((k) => `<div class="kpi"><div class="k">${k.k}</div><div class="v">${k.v}</div><div class="d">${k.d || '&nbsp;'}</div></div>`).join('');
+    return items.map((k) => `<div class="kpi"><div class="k">${k.k}</div><div class="v" title="${esc(String(k.v).replace(/<[^>]+>/g, ''))}">${k.v}</div><div class="d">${k.d || '&nbsp;'}</div>${sparkSvg(k.spark)}</div>`).join('');
+  }
+  // Gün gün değer dizisi (özet kartı eğrileri için)
+  function daySeries(start, end, fn, filter = () => true, maxDays = 60) {
+    let a = start;
+    if (dayCount(start, end) > maxDays) a = addDays(end, -(maxDays - 1));
+    const out = [];
+    for (let d = a; d <= end; d = addDays(d, 1)) out.push(fn((S.byDate.get(d) || []).filter(filter)));
+    return out;
   }
 
   // Basit tablo oluşturucu
@@ -385,7 +433,7 @@
       const arrow = sort && sort.k === c.key ? (sort.dir > 0 ? ' ↑' : ' ↓') : '';
       return `<th class="${c.num ? 'num' : ''}${s}">${c.label}${arrow}</th>`;
     }).join('');
-    const body = rows.map((r) => `<tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''}${c.cls ? ` ${c.cls}` : ''}"${c.title ? ` title="${esc(c.title(r))}"` : ''}>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}</tr>`).join('');
+    const body = rows.map((r) => `<tr${opts.rowAttr ? ` ${opts.rowAttr(r)}` : ''}>${cols.map((c) => `<td class="${c.num ? 'num' : ''}${c.cls ? ` ${c.cls}` : ''}"${c.title ? ` title="${esc(c.title(r))}"` : ''}>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}</tr>`).join('');
     // foot: tek satır (nesne) ya da birden çok satır (dizi)
     const feet = opts.foot ? (Array.isArray(opts.foot) ? opts.foot : [opts.foot]) : [];
     const foot = feet.length ? `<tfoot>${feet.map((f) => `<tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''}">${f[c.key] ?? ''}</td>`).join('')}</tr>`).join('')}</tfoot>` : '';
@@ -433,7 +481,7 @@
       { key: 'items', label: 'Ürünler', cls: 'trunc', render: (o) => itemsText(saleItems(o).length || !o.items?.length ? saleItems(o) : o.items, o.sg === 'kismi' ? ` <span class="pill kismi">${n0(retQty(o))} ürün iade</span>` : ''), title: (o) => itemsTitle(o.items || []) },
       { key: 'qty', label: 'Adet', num: true, sort: true, render: (o) => n0(saleQty(o)) },
       { key: 'total', label: 'Tutar', num: true, sort: true, render: (o) => tl2(amt(o)) },
-    ], pg.rows, { empty: 'Sipariş yok.', sort: sortable ? state.sort : null, onSort: () => { state.page = 0; rerender(); } });
+    ], pg.rows, { empty: 'Sipariş yok.', sort: sortable ? state.sort : null, onSort: () => { state.page = 0; rerender(); }, rowAttr: (o) => `class="clickable" data-oid="${esc(o.id)}"` });
     pager(pagerEl, list.length, state, pg, rerender, el);
   }
 
@@ -574,6 +622,87 @@
   }
 
 
+  // ---------- Halka grafik: pazaryeri payı ----------
+  function donut(el, list) {
+    const groups = chartGroups(S.mpOrder);
+    const items = groups.map((g) => ({ ...g, value: sum(list.filter((o) => g.members.includes(o.mp)), amt) })).filter((g) => g.value > 0).sort((a, b) => b.value - a.value);
+    const total = sum(items, (g) => g.value);
+    if (!total) { el.innerHTML = '<p class="empty">Bu aralıkta satış yok.</p>'; return; }
+    const R = 74; const C = 2 * Math.PI * R; const gap = items.length > 1 ? 2.5 : 0;
+    let off = 0;
+    const segs = items.map((g) => {
+      const len = (g.value / total) * C;
+      const seg = `<circle cx="95" cy="95" r="${R}" fill="none" stroke="${g.color}" stroke-width="24" stroke-dasharray="${Math.max(0.5, len - gap)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 95 95)"><title>${esc(g.label)}: ${tl(g.value)} (${pct(g.value / total)})</title></circle>`;
+      off += len;
+      return seg;
+    }).join('');
+    el.innerHTML = `<svg viewBox="0 0 190 190" role="img" aria-label="Pazaryeri payı">${segs}
+      <text x="95" y="91" text-anchor="middle" class="donut-center-v">${esc(fmtCompact.format(total))} ₺</text>
+      <text x="95" y="110" text-anchor="middle" class="donut-center-k">toplam ciro</text></svg>
+      <div class="donut-legend">${items.map((g) => `<div class="row"><span class="sw" style="background:${g.color}"></span><span>${esc(g.label)}</span><b>${tl(g.value)}</b><small>${pct(g.value / total)}</small></div>`).join('')}</div>`;
+  }
+
+  // ---------- Isı haritası: gün × saat ortalama sipariş ----------
+  function heatmap(el, list, start, end) {
+    const order = [1, 2, 3, 4, 5, 6, 0];
+    const daysOf = Array(7).fill(0);
+    for (let x = start; x <= end; x = addDays(x, 1)) daysOf[D(x).getUTCDay()]++;
+    const cnt = Array.from({ length: 7 }, () => Array(24).fill(0));
+    for (const o of list) if (o.time) cnt[D(o.date).getUTCDay()][+o.time.slice(0, 2)]++;
+    const avg = cnt.map((row, g) => row.map((c) => (daysOf[g] ? c / daysOf[g] : 0)));
+    const max = Math.max(0, ...avg.flat());
+    if (!max) { el.innerHTML = '<p class="empty">Saat bilgisi olan sipariş yok.</p>'; return; }
+    const f1 = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 1 });
+    const shade = (v) => (v ? `color-mix(in srgb, var(--s1) ${Math.round(14 + 86 * (v / max))}%, var(--surface-2))` : 'var(--surface-2)');
+    let h = '<div></div>' + Array.from({ length: 24 }, (_, i) => `<div class="hh">${i % 3 === 0 ? String(i).padStart(2, '0') : ''}</div>`).join('');
+    for (const g of order) {
+      h += `<div class="hl">${DAYS[g]}</div>` + avg[g].map((v, i) => `<div class="hc" style="background:${shade(v)}" title="${DAYS[g]} ${String(i).padStart(2, '0')}:00 · ortalama ${f1.format(v)} sipariş"></div>`).join('');
+    }
+    el.innerHTML = h;
+    const scale = el.parentElement.nextElementSibling?.classList.contains('heat-scale') ? el.parentElement.nextElementSibling : null;
+    const sc = `<span>az</span>${[0.1, 0.3, 0.5, 0.7, 1].map((r) => `<i style="background:${shade(r * max)}"></i>`).join('')}<span>çok · en yoğun saat ortalama ${f1.format(max)} sipariş</span>`;
+    if (scale) scale.innerHTML = sc; else el.parentElement.insertAdjacentHTML('afterend', `<div class="heat-scale">${sc}</div>`);
+  }
+
+  // ---------- Sipariş detay paneli ----------
+  function openOrder(id) {
+    const o = S.byId?.get(String(id));
+    if (!o) return;
+    $('#dr-mp').innerHTML = `${sw(o.mp)}${esc(mpLabel(o.mp))}`;
+    $('#dr-title').textContent = o.no || o.id;
+    const its = o.items || [];
+    const rows = [
+      ['Tarih', `${trDateLong(o.date)}${o.time ? `, ${o.time}` : ''}`],
+      o.customer ? ['Müşteri', esc(o.customer)] : null,
+      o.city ? ['Şehir', esc(o.city)] : null,
+      o.carrier ? ['Kargo', esc(o.carrier)] : null,
+      o.changed ? ['Son güncelleme', `${trDate(o.changed)} ${o.changed.slice(11, 16)}`] : null,
+      ['Entegra no', esc(o.id)],
+    ].filter(Boolean);
+    const ret = retAmt(o);
+    $('#dr-body').innerHTML = `<div><span class="pill ${o.sg}">${esc(o.status || STATUS[o.sg])}</span></div>
+      <dl class="dl">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+      <div><h3 class="section-title" style="margin:0 0 8px">Ürünler (${its.length})</h3>
+        <div class="drawer-items">${its.length ? its.map((i) => `<div class="it${i.r || isLost(o) ? ' ret' : ''}"><span>${esc(i.name)}${i.r ? ' <span class="pill iade">iade</span>' : ''}</span><span class="amt">${tl2(i.total)}</span><small>${i.sku ? `${esc(i.sku)} · ` : ''}${n0(i.qty)} adet${i.qty > 1 ? ` · birim ${tl2(i.total / i.qty)}` : ''}</small></div>`).join('') : '<div class="it"><span>Ürün bilgisi yok</span></div>'}</div></div>
+      <div class="drawer-tot">
+        <span>Sipariş tutarı</span><b>${tl2(o.total)}</b>
+        ${ret ? `<span>İade / iptal</span><b class="ret-amt">− ${tl2(ret)}</b>` : ''}
+        ${o.commission ? `<span>Komisyon</span><b>${tl2(o.commission)}</b>` : ''}
+        ${o.cargoPrice ? `<span>Kargo maliyeti</span><b>${tl2(o.cargoPrice)}</b>` : ''}
+        <span class="big">Satış</span><b class="big">${tl2(amt(o))}</b>
+      </div>`;
+    $('#drawer').classList.add('open');
+    $('#drawer').setAttribute('aria-hidden', 'false');
+    $('#scrim').hidden = false;
+    $('#dr-close').focus();
+  }
+  function closeOrder() {
+    if (!$('#drawer').classList.contains('open')) return;
+    $('#drawer').classList.remove('open');
+    $('#drawer').setAttribute('aria-hidden', 'true');
+    $('#scrim').hidden = !$('#app').classList.contains('menu-open');
+  }
+
   // Satışları zaman kovalarına ve pazaryeri gruplarına dağıtır
   function seriesBy(list, bucketKeys, bucketOf, metric, keys) {
     const groups = chartGroups(keys || S.mpOrder);
@@ -630,11 +759,13 @@
       extra.push(single ? `geçen hafta bugün ${n0(w.count)}` : `geçen hafta aynı günler ${n0(w.count)}`);
     }
 
+    // Kart eğrileri: tek günde son 14 gün, aralıkta seçili günler
+    const gs = (fn) => daySeries(n >= 14 ? start : addDays(end, -13), end, fn);
     $('#g-kpis').innerHTML = kpiHtml([
-      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} ${cmp}` },
-      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)}${extra.length ? ` · ${extra[0]}` : ` ${cmp}`}` },
-      { k: 'Satılan ürün', v: n0(s.qty), d: `${single ? 'önceki gün' : 'önceki dönem'} ${n0(p.qty)}` },
-      { k: 'Ortalama sepet', v: tl(s.avg), d: `${single ? 'önceki gün' : 'önceki dönem'} ${tl(p.avg)}` },
+      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} ${cmp}`, spark: gs((l) => stats(l).total) },
+      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)}${extra.length ? ` · ${extra[0]}` : ` ${cmp}`}`, spark: gs((l) => stats(l).count) },
+      { k: 'Satılan ürün', v: n0(s.qty), d: `${delta(s.qty, p.qty) || ''} ${single ? 'önceki gün' : 'önceki dönem'} ${n0(p.qty)}`, spark: gs((l) => stats(l).qty) },
+      { k: 'Ortalama sepet', v: tl(s.avg), d: `${delta(s.avg, p.avg) || ''} ${single ? 'önceki gün' : 'önceki dönem'} ${tl(p.avg)}`, spark: gs((l) => stats(l).avg) },
     ]);
 
     // Pazaryeri tablosu
@@ -650,6 +781,8 @@
       { key: 'avg', label: 'Ort. sepet', num: true, render: (r) => tl(r.avg) },
       { key: 'd', label: single ? 'Önceki gün' : 'Önceki dönem', num: true, render: (r) => delta(r.total, r.prev) || '—' },
     ], rows, { empty: 'Bu tarihlerde sipariş yok.', foot: rows.length > 1 ? { k: 'Toplam', count: n0(s.count), qty: n0(s.qty), total: tl(s.total), avg: tl(s.avg), d: delta(s.total, p.total) } : null });
+
+    donut($('#g-donut'), list);
 
     // Saatlik
     const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
@@ -716,11 +849,12 @@
     const cmp = isCurrent ? 'geçen ayın aynı dönemine göre' : 'önceki aya göre';
     $('#a-sub').textContent = isCurrent ? `Ayın ${elapsed}. günü · ${dim - elapsed} gün kaldı · iade ve iptaller hariç` : `${dim} gün · iade ve iptaller hariç`;
 
+    const as = (fn) => daySeries(start, today < end ? today : end, fn);
     const kp = [
-      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} ${cmp}` },
-      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)} ${cmp}` },
-      { k: 'Satılan ürün', v: n0(s.qty), d: delta(s.qty, p.qty) },
-      { k: 'Ortalama sepet', v: tl(s.avg), d: `önceki ${tl(p.avg)}` },
+      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} ${cmp}`, spark: as((l) => stats(l).total) },
+      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)} ${cmp}`, spark: as((l) => stats(l).count) },
+      { k: 'Satılan ürün', v: n0(s.qty), d: `${delta(s.qty, p.qty) || ''} ${cmp}`, spark: as((l) => stats(l).qty) },
+      { k: 'Ortalama sepet', v: tl(s.avg), d: `${delta(s.avg, p.avg) || ''} önceki ${tl(p.avg)}`, spark: as((l) => stats(l).avg) },
       { k: 'Günlük ortalama', v: tl(s.total / elapsed), d: `${n0(s.count / elapsed)} sipariş / gün` },
     ];
     if (isCurrent && elapsed > 2) kp.push({ k: 'Ay sonu tahmini', v: tl((s.total / elapsed) * dim), d: 'bugünkü hıza göre' });
@@ -827,6 +961,7 @@
       { key: 'total', label: 'Tutar', num: true, sort: true, render: (r) => tl2(r.total) },
     ], pg.rows, {
       empty: 'Bu ay seçili pazaryerlerinde sipariş yok.',
+      rowAttr: (r) => `class="clickable" data-oid="${esc(r.o.id)}"`,
       sort: L.sort,
       onSort: () => { L.page = 0; renderMonthList(L.src); },
       foot: rows.length ? { date: 'Toplam', qty: n0(sum(rows, (r) => r.qty)), total: tl2(sum(rows, (r) => r.total)) } : null,
@@ -877,11 +1012,13 @@
     const pEnd = addDays(d.start, -1); const pStart = addDays(pEnd, -(ndays - 1));
     const p = stats(detailList(pStart, pEnd));
     const cmp = pStart < S.dates[0] ? `önceki ${ndays} güne göre (önceki dönemin verisi eksik)` : `önceki ${ndays} güne göre`;
+    const dq = lc(d.q);
+    const ds = (fn) => daySeries(d.start, d.end > todayTR() ? todayTR() : d.end, fn, (o) => isSale(o) && d.mps.has(o.mp) && (!d.status || o.sg === d.status) && matchQ(o, dq));
     const kp = [
-      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} ${cmp}` },
-      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)} ${cmp}` },
-      { k: 'Satılan ürün', v: n0(s.qty), d: `${n0(s.qty / ndays)} / gün` },
-      { k: 'Ortalama sepet', v: tl(s.avg), d: `günlük ort. ciro ${tl(s.total / ndays)}` },
+      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} ${cmp}`, spark: ds((l) => stats(l).total) },
+      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)} ${cmp}`, spark: ds((l) => stats(l).count) },
+      { k: 'Satılan ürün', v: n0(s.qty), d: `${delta(s.qty, p.qty) || ''} ${n0(s.qty / ndays)} / gün`, spark: ds((l) => stats(l).qty) },
+      { k: 'Ortalama sepet', v: tl(s.avg), d: `${delta(s.avg, p.avg) || ''} günlük ort. ciro ${tl(s.total / ndays)}`, spark: ds((l) => stats(l).avg) },
     ];
     $('#d-kpis').innerHTML = kpiHtml(kp);
 
@@ -917,6 +1054,9 @@
       { key: 'share', label: 'Pay', num: true, render: (r) => shareBar(r.total, s.total, mpColor(r.k)) },
       { key: 'avg', label: 'Ort. sepet', num: true, render: (r) => tl(r.avg) },
     ], rows, { foot: rows.length > 1 ? { k: 'Toplam', count: n0(s.count), qty: n0(s.qty), total: tl(s.total), avg: tl(s.avg) } : null });
+
+    donut($('#d-donut'), list);
+    heatmap($('#d-heat'), list, d.start, d.end > todayTR() ? todayTR() : d.end);
 
     // Ürünler
     const prods = productRows(list);
@@ -1018,10 +1158,18 @@
     const base = ordersBetween(r.start, r.end).filter((o) => r.mps.has(o.mp));
     const baseRet = base.filter(isRet);
 
+    // Kart eğrileri: seçili aralıkta gün gün adet (seçili tarih türüne göre)
+    const rs = (t) => {
+      const end = r.end > todayTR() ? todayTR() : r.end;
+      let a = r.start; if (dayCount(a, end) > 60) a = addDays(end, -59);
+      const by = groupBy(allTypes.filter((o) => o.sg === t), (o) => (byChanged ? retDay(o) : o.date));
+      const out = []; for (let x = a; x <= end; x = addDays(x, 1)) out.push((by.get(x) || []).length);
+      return out;
+    };
     $('#r-kpis').innerHTML = kpiHtml([
-      { k: 'İptal', v: n0(iptal.length), d: tl(sum(iptal, retAmt)) },
-      { k: 'İade', v: n0(iade.length), d: tl(sum(iade, retAmt)) },
-      { k: 'Kısmi iade', v: n0(kismi.length), d: `${tl(sum(kismi, retAmt))} iade edilen` },
+      { k: 'İptal', v: n0(iptal.length), d: tl(sum(iptal, retAmt)), spark: rs('iptal') },
+      { k: 'İade', v: n0(iade.length), d: tl(sum(iade, retAmt)), spark: rs('iade') },
+      { k: 'Kısmi iade', v: n0(kismi.length), d: `${tl(sum(kismi, retAmt))} iade edilen`, spark: rs('kismi') },
       { k: 'Toplam iade/iptal tutarı', v: tl(sum(allTypes, retAmt)), d: `${n0(sum(allTypes, retQty))} ürün` },
       { k: 'İade/iptal oranı', v: pct(base.length ? baseRet.length / base.length : 0), d: `${n0(baseRet.length)} / ${n0(base.length)} sipariş (sipariş tarihine göre)` },
     ]);
@@ -1084,7 +1232,7 @@
       { key: 'total', label: 'Sipariş tutarı', num: true, sort: true, render: (o) => tl2(o.total) },
       { key: 'ret', label: 'İade/iptal tutarı', num: true, sort: true, render: (o) => `<span class="ret-amt">${tl2(retAmt(o))}</span>` },
       { key: 'status', label: 'Durum', sort: true, render: rawStatusPill },
-    ], pg.rows, { empty: 'Bu filtrelerle iade veya iptal yok.', sort: r.sort, onSort: () => { r.page = 0; renderReturns(); } });
+    ], pg.rows, { empty: 'Bu filtrelerle iade veya iptal yok.', sort: r.sort, onSort: () => { r.page = 0; renderReturns(); }, rowAttr: (o) => `class="clickable" data-oid="${esc(o.id)}"` });
     pager($('#r-pager'), list.length, r, pg, renderReturns, $('#r-orders'));
   }
 
