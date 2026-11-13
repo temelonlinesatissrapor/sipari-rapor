@@ -80,7 +80,7 @@
     mpOrder: [],
     charts: {},
     view: 'gunluk',
-    g: { start: null, end: null, page: 0, psort: { k: 'qty', dir: -1 } },
+    g: { start: null, end: null, page: 0, psort: { k: 'qty', dir: -1 }, sort: { k: 'date', dir: -1 } },
     a: { month: null, list: { month: null, mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 }, src: [], edit: false } },
     edits: { saved: { v: 1, orders: {}, savedAt: '' }, pending: {}, state: 'none' },
     d: { start: null, end: null, preset: '30', mps: null, status: '', q: '', gran: 'auto', metric: 'total', page: 0, sort: { k: 'date', dir: -1 }, psort: { k: 'total', dir: -1 } },
@@ -484,13 +484,15 @@
       { key: 'date', label: 'Tarih', sort: true, render: (o) => `${trDate(o.date)} <span style="color:var(--muted)">${o.time || ''}</span>` },
       { key: 'no', label: 'Sipariş no', sort: true, render: (o) => esc(o.no || o.id) },
       { key: 'mp', label: 'Pazaryeri', sort: true, render: (o) => mpCell(o.mp) },
-      { key: 'items', label: 'Ürünler', cls: 'trunc', render: (o) => itemsText(saleItems(o).length || !o.items?.length ? saleItems(o) : o.items, o.sg === 'kismi' ? ` <span class="pill kismi">${n0(retQty(o))} ürün iade</span>` : ''), title: (o) => itemsTitle(o.items || []) },
+      { key: 'items', label: 'Ürünler', sort: true, cls: 'trunc', render: (o) => itemsText(saleItems(o).length || !o.items?.length ? saleItems(o) : o.items, o.sg === 'kismi' ? ` <span class="pill kismi">${n0(retQty(o))} ürün iade</span>` : ''), title: (o) => itemsTitle(o.items || []) },
       { key: 'qty', label: 'Adet', num: true, sort: true, render: (o) => n0(saleQty(o)) },
       { key: 'total', label: 'Tutar', num: true, sort: true, render: (o) => tl2(amt(o)) },
     ], pg.rows, { empty: 'Sipariş yok.', sort: sortable ? state.sort : null, onSort: () => { state.page = 0; rerender(); }, rowAttr: (o) => `class="clickable" data-oid="${esc(o.id)}"` });
     pager(pagerEl, list.length, state, pg, rerender, el);
   }
 
+  const firstItemName = (o) => (saleItems(o)[0] || o.items?.[0] || {}).name || '';
+  const ORDER_SORT = { items: firstItemName, qty: saleQty, total: amt };
   function sortOrders(list, sk, val) {
     return [...list].sort((a, b) => {
       let va; let vb;
@@ -498,7 +500,7 @@
       else if (sk.k === 'mp') { va = mpLabel(a.mp); vb = mpLabel(b.mp); }
       else if (val && val[sk.k]) { va = val[sk.k](a); vb = val[sk.k](b); }
       else { va = a[sk.k]; vb = b[sk.k]; }
-      return (typeof va === 'number' ? va - vb : String(va ?? '').localeCompare(String(vb ?? ''), 'tr')) * sk.dir;
+      return (typeof va === 'number' ? va - vb : String(va ?? '').localeCompare(String(vb ?? ''), 'tr', { sensitivity: 'base' })) * sk.dir;
     });
   }
 
@@ -824,8 +826,9 @@
     ], prods, { empty: 'Satış yok.', sort: ps, onSort: renderDaily, foot: prods.length > 1 ? { name: 'Toplam', qty: n0(sum(prods, (r) => r.qty)), total: tl(sum(prods, (r) => r.total)) } : null });
 
     $('#g-orders-title').textContent = single ? 'Günün siparişleri' : 'Seçilen günlerin siparişleri';
-    $('#g-orders-sub').textContent = `${n0(list.length)} sipariş · iade ve iptaller hariç`;
-    ordersTable($('#g-orders'), $('#g-pager'), [...list].reverse(), S.g, renderDaily, false);
+    $('#g-orders-sub').textContent = `${n0(list.length)} sipariş · iade ve iptaller hariç · başlıklara tıklayarak sıralayın`;
+    // Günün siparişleri: başlığa tıklayarak sıralanır (Ürünler'de ilk tıklama A→Z)
+    ordersTable($('#g-orders'), $('#g-pager'), sortOrders(list, S.g.sort, ORDER_SORT), S.g, renderDaily, true);
   }
 
   // ---------- AYLIK ----------
@@ -1409,7 +1412,7 @@
     ], order.map((i) => ({ g: DAYS[i], c: wd[i].days ? wd[i].count / wd[i].days : 0, t: wd[i].days ? wd[i].total / wd[i].days : 0 })));
 
     // Siparişler
-    const sorted = sortOrders(list, d.sort, { qty: saleQty, total: amt });
+    const sorted = sortOrders(list, d.sort, ORDER_SORT);
     $('#d-orders-sub').textContent = `${n0(list.length)} sipariş · iade ve iptaller hariç · başlığa tıklayarak sıralayın`;
     ordersTable($('#d-orders'), $('#d-pager'), sorted, d, renderDetail, true);
   }
