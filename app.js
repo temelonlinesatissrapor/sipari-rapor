@@ -1,6 +1,9 @@
-/* Sipariş Raporları — Entegra verilerinden günlük, aylık ve detaylı rapor ekranları */
+/* Sipariş Raporları — Entegra verilerinden günlük, aylık, detaylı ve iade/iptal rapor ekranları */
 (() => {
   'use strict';
+
+  // Firma adı: sol üstte ve giriş ekranında görünür. Boş bırakılırsa "Sipariş Raporları" yazar.
+  const FIRMA_ADI = '';
 
   // ---------- Yardımcılar ----------
   const $ = (s, r = document) => r.querySelector(s);
@@ -29,18 +32,34 @@
   const addDays = (s, n) => { const d = D(s); d.setUTCDate(d.getUTCDate() + n); return ymd(d); };
   const addMonths = (m, n) => { const d = new Date(`${m}-15T12:00:00Z`); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 7); };
   const daysInMonth = (m) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
+  const dayCount = (a, b) => Math.round((D(b) - D(a)) / 864e5) + 1;
   const todayTR = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul' }).format(new Date());
   const trDate = (s) => `${s.slice(8, 10)}.${s.slice(5, 7)}.${s.slice(0, 4)}`;
   const trDateLong = (s) => `${+s.slice(8, 10)} ${MONTHS[+s.slice(5, 7) - 1]} ${s.slice(0, 4)}, ${DAYS[D(s).getUTCDay()]}`;
+  const trDayMonth = (s) => `${+s.slice(8, 10)} ${MONTHS[+s.slice(5, 7) - 1]}`;
+  const trRange = (a, b) => (a === b ? trDateLong(a) : `${trDayMonth(a)}${a.slice(0, 4) !== b.slice(0, 4) ? ` ${a.slice(0, 4)}` : ''} – ${trDayMonth(b)} ${b.slice(0, 4)} · ${dayCount(a, b)} gün`);
   const trMonth = (m) => `${MONTHS[+m.slice(5, 7) - 1]} ${m.slice(0, 4)}`;
   const weekStart = (s) => { const g = D(s).getUTCDay(); return addDays(s, -((g + 6) % 7)); };
   const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);
   const groupBy = (arr, f) => { const m = new Map(); for (const x of arr) { const k = f(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return m; };
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const lc = (s) => String(s || '').toLocaleLowerCase('tr-TR');
 
-  const STATUS = { yeni: 'Yeni / Hazırlanıyor', kargo: 'Kargoda', teslim: 'Teslim Edildi', iptal: 'İptal', iade: 'İade' };
+  // ---------- Satış / iade ayrımı ----------
+  // Satış ekranları yalnızca gerçekleşen satışları gösterir. İptal ve tam iadeler satıştan tamamen çıkar;
+  // kısmi iadede yalnızca dönen ürünler düşülür, kalan kısım satış sayılır.
+  const STATUS = { yeni: 'Yeni / Hazırlanıyor', kargo: 'Kargoda', teslim: 'Teslim Edildi', kismi: 'Kısmi İade', iptal: 'İptal', iade: 'İade' };
+  const RET_TYPES = { iptal: 'İptal', iade: 'İade', kismi: 'Kısmi iade' };
   const isLost = (o) => o.sg === 'iptal' || o.sg === 'iade';
-  const valid = (o) => !isLost(o);
+  const isSale = (o) => !isLost(o);
+  const isRet = (o) => isLost(o) || o.sg === 'kismi';
+  const sales = (list) => list.filter(isSale);
+  const saleItems = (o) => (o.items || []).filter((i) => !i.r);
+  const retItems = (o) => (isLost(o) ? (o.items || []) : (o.items || []).filter((i) => i.r));
+  const retAmt = (o) => (isLost(o) ? (o.ret ?? o.total) : (o.ret || 0));
+  const retQty = (o) => o.retQty ?? sum(retItems(o), (i) => i.qty);
+  const amt = (o) => (isLost(o) ? 0 : o.total - (o.sg === 'kismi' ? (o.ret || 0) : 0));
+  const saleQty = (o) => (isLost(o) ? 0 : (o.items?.length ? sum(saleItems(o), (i) => i.qty) : o.qty));
 
   function delta(cur, prev) {
     if (!prev) return cur ? '<span class="up">yeni</span>' : '';
@@ -54,15 +73,19 @@
     manifest: null,
     password: '',
     orders: [],
+    retOrders: [],
     byDate: new Map(),
     dates: [],
     mp: new Map(), // key -> { label, slot, color }
     mpOrder: [],
     charts: {},
     view: 'gunluk',
-    g: { date: null, page: 0 },
-    a: { month: null },
-    d: { start: null, end: null, preset: '30', mps: null, status: '', q: '', excl: true, gran: 'auto', metric: 'total', page: 0, sort: { k: 'date', dir: -1 }, psort: { k: 'total', dir: -1 } },
+    g: { start: null, end: null, page: 0, psort: { k: 'qty', dir: -1 }, sort: { k: 'date', dir: -1 } },
+    a: { month: null, list: { month: null, mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 }, src: [], edit: false } },
+    edits: { saved: { v: 1, orders: {}, savedAt: '' }, pending: {}, state: 'none' },
+    d: { start: null, end: null, preset: '30', mps: null, status: '', q: '', gran: 'auto', metric: 'total', page: 0, sort: { k: 'date', dir: -1 }, psort: { k: 'total', dir: -1 } },
+    k: { years: null, pastYear: null, metric: 'sales', month: null, parsed: null },
+    r: { start: null, end: null, preset: '30', datetype: 'order', type: '', mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 } },
   };
 
   // ---------- Şifre çözme ----------
@@ -90,67 +113,132 @@
   async function loadMonths(password) {
     const files = await Promise.all(S.manifest.months.map((m) => getJson(`data/${m}.json`)));
     const out = [];
-    for (const f of files) {
-      const body = f.alg ? await decrypt(f, password) : f;
-      out.push(...(body.orders || []));
+    S.unreadable = [];
+    for (const [i, f] of files.entries()) {
+      try {
+        const body = f.alg ? await decrypt(f, password) : f;
+        out.push(...(body.orders || []));
+      } catch { S.unreadable.push(S.manifest.months[i]); }
     }
+    // Hiçbir ay açılamıyorsa şifre/anahtar yanlıştır
+    if (files.length && S.unreadable.length === files.length) throw new Error('veriler açılamadı');
     return out;
   }
 
+  // ---------- Kullanıcılar ----------
+  // users.json varsa her kişi kendi kullanıcı adı + şifresiyle girer. Dosyada her kullanıcı için
+  // ana veri anahtarı, o kişinin adı+şifresinden türetilen anahtarla şifreli durur.
+  const normUser = (u) => String(u || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('tr-TR').replace(/ı/g, 'i').replace(/\s+/g, ' ').trim();
+  async function userId(u) {
+    const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`siparis-rapor:${normUser(u)}`));
+    return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+  }
+  async function unlockUser(user, pass) {
+    const entry = S.users?.users?.[await userId(user)];
+    if (!entry) throw Object.assign(new Error('kullanıcı yok'), { reason: 'user' });
+    try {
+      const { k, n } = await decrypt(entry, `${normUser(user)}\n${String(pass).trim()}`);
+      return { key: k, name: n };
+    } catch { throw Object.assign(new Error('şifre'), { reason: 'pass' }); }
+  }
+  const usersOn = () => Boolean(S.users?.enabled);
+
   // ---------- Açılış ----------
+  function bootMsg(html) { const b = $('#boot'); b.className = 'boot msg'; b.removeAttribute('aria-busy'); b.innerHTML = `<p>${html}</p>`; }
+
   async function boot() {
     applyTheme(store.get('tema'));
+    if (FIRMA_ADI) { $$('.brand-name-text').forEach((e) => { e.textContent = FIRMA_ADI; }); document.title = `${FIRMA_ADI} · Sipariş Raporları`; }
     try {
       S.manifest = await getJson('data/manifest.json');
     } catch {
-      $('#boot').innerHTML = 'Henüz veri yok. GitHub Actions\'taki <b>Siparişleri Çek</b> iş akışını çalıştırın.';
+      bootMsg('Henüz veri yok. GitHub Actions\'taki <b>Siparişleri Çek</b> iş akışını çalıştırın.');
       return;
     }
     if (!S.manifest.months?.length) {
-      $('#boot').textContent = 'Henüz sipariş verisi yok. İlk çekimden sonra burada görünecek.';
+      bootMsg('Henüz sipariş verisi yok. İlk çekimden sonra burada görünecek.');
       return;
     }
-    if (S.manifest.encrypted) {
-      const saved = store.get('rapor-sifre') || store.get('rapor-sifre', true);
-      if (saved && await tryOpen(saved)) return;
-      showGate();
-    } else {
-      await openWith('');
+    try { S.users = await getJson('data/users.json'); } catch { S.users = null; }
+    if (!S.manifest.encrypted) { await openWith(''); return; }
+
+    // Kayıtlı giriş her açılışta güncel kullanıcı listesine göre yeniden doğrulanır:
+    // listeden çıkarılan kişi, kayıtlı girişi olsa bile giremez.
+    let saved = null;
+    try { saved = JSON.parse(store.get('rapor-giris') || store.get('rapor-giris', true) || 'null'); } catch { saved = null; }
+    if (saved && (await tryLogin(saved.u, saved.p)) === true) return;
+    store.del('rapor-giris'); store.del('rapor-sifre');
+    showGate();
+  }
+
+  // Başarılıysa true, değilse hata nedenini döndürür: 'user' | 'pass' | 'data'
+  async function tryLogin(user, pass) {
+    let key = pass; let name = '';
+    if (usersOn()) {
+      try { ({ key, name } = await unlockUser(user, pass)); } catch (e) { return e.reason || 'pass'; }
+    }
+    try { await openWith(key, name); return true; } catch (e) {
+      console.error('Veriler açılamadı:', e);
+      return usersOn() ? 'data' : 'pass';
     }
   }
 
-  async function tryOpen(pass) {
-    try { await openWith(pass); return true; } catch { return false; }
-  }
-
-  async function openWith(pass) {
+  async function openWith(pass, name) {
     const orders = await loadMonths(pass);
+    await loadHistory(pass);
     S.password = pass;
-    ingest(orders);
+    S.userName = name || '';
+    // Ham veri saklanır; elle düzeltmeler her seferinde bunun kopyasına uygulanır
+    S.rawOrders = orders;
+    S.rawById = new Map(orders.map((o) => [String(o.id), o]));
+    await loadEdits(pass);
+    ingest(applyEdits(orders));
     $('#gate').classList.add('hidden');
     $('#boot').classList.add('hidden');
     $('#app').classList.remove('hidden');
     $('#lock-btn').classList.toggle('hidden', !S.manifest.encrypted);
+    if (usersOn()) {
+      $('#lock-btn').title = 'Çıkış yap'; $('#lock-btn').setAttribute('aria-label', 'Çıkış yap');
+    }
+    $('#who').classList.toggle('hidden', !S.userName);
+    $('#who').textContent = S.userName;
+    $('#who-avatar').textContent = S.userName ? S.userName.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toLocaleUpperCase('tr-TR') : '';
     startApp();
   }
 
   function showGate() {
     $('#boot').classList.add('hidden');
     $('#gate').classList.remove('hidden');
-    if (S.manifest.demo) $('#gate-err').innerHTML = '<span style="color:var(--muted)">Örnek veri şifresi: <b>demo</b></span>';
-    $('#gate-pass').focus();
+    const multi = usersOn();
+    $('#gate-user').classList.toggle('hidden', !multi);
+    $('#gate-user-field').classList.toggle('hidden', !multi);
+    $('#gate-user').required = multi;
+    $('#gate-pass').placeholder = multi ? 'Şifreniz' : 'Rapor şifresi';
+    $('#gate-pass-label').textContent = multi ? 'Şifre' : 'Rapor şifresi';
+    $('#gate-text').textContent = multi ? 'Kullanıcı adınız ve şifrenizle giriş yapın.' : 'Veriler şifreli. Devam etmek için rapor şifresini girin.';
+    $('#gate-btn').textContent = multi ? 'Giriş yap' : 'Aç';
+    if (S.manifest.demo && !multi) $('#gate-err').innerHTML = '<span style="color:var(--muted)">Örnek veri şifresi: <b>demo</b></span>';
+    (multi ? $('#gate-user') : $('#gate-pass')).focus();
     $('#gate-form').onsubmit = async (e) => {
       e.preventDefault();
+      const user = $('#gate-user').value.trim();
       const pass = $('#gate-pass').value;
+      const label = $('#gate-btn').textContent;
       $('#gate-btn').disabled = true;
       $('#gate-btn').textContent = 'Açılıyor…';
       $('#gate-err').textContent = '';
-      if (await tryOpen(pass)) {
-        store.set('rapor-sifre', pass, !$('#gate-remember').checked);
+      const res = await tryLogin(user, pass);
+      if (res === true) {
+        store.set('rapor-giris', JSON.stringify({ u: user, p: pass }), !$('#gate-remember').checked);
       } else {
-        $('#gate-err').textContent = 'Şifre hatalı.';
+        $('#gate-err').textContent = {
+          user: 'Bu kullanıcı adı tanımlı değil. Yazımı kontrol edin.',
+          pass: multi ? 'Şifre hatalı.' : 'Şifre hatalı.',
+          data: 'Giriş bilgileri doğru ama veriler açılamadı. Ana şifre (DASHBOARD_PASSWORD) değiştirilmiş olabilir.',
+        }[res] || 'Giriş yapılamadı.';
         $('#gate-btn').disabled = false;
-        $('#gate-btn').textContent = 'Aç';
+        $('#gate-btn').textContent = label;
       }
     };
   }
@@ -161,6 +249,8 @@
     S.orders = [...seen.values()].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
     S.byDate = groupBy(S.orders, (o) => o.date);
     S.dates = [...S.byDate.keys()].sort();
+    S.retOrders = S.orders.filter(isRet);
+    S.byId = new Map(S.orders.map((o) => [String(o.id), o]));
 
     // Renk, pazaryerine bağlıdır (sıraya değil): tüm verideki ciroya göre sabit atanır
     const totals = new Map();
@@ -173,9 +263,9 @@
     S.mp = new Map(S.mpOrder.map((k, i) => [k, { label: totals.get(k).label, slot: i < 8 ? i + 1 : 0 }]));
     refreshColors();
 
-    const statuses = [...new Set(S.orders.map((o) => o.sg))];
+    const statuses = new Set(S.orders.filter(isSale).map((o) => o.sg));
     $('#d-status').innerHTML = '<option value="">Tüm durumlar</option>' +
-      Object.entries(STATUS).filter(([k]) => statuses.includes(k)).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+      Object.entries(STATUS).filter(([k]) => statuses.has(k)).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
   }
 
   function refreshColors() {
@@ -196,24 +286,41 @@
   }
 
   // ---------- Uygulama ----------
+  const VIEWS = ['gunluk', 'aylik', 'detay', 'iade-iptal', 'karsilastirma'];
+
   function startApp() {
     const u = S.manifest.updatedAt ? new Date(S.manifest.updatedAt) : null;
     if (u) {
-      $('#updated').textContent = `Son güncelleme: ${u.toLocaleString('tr-TR', { dateStyle: 'medium', timeStyle: 'short' })}`;
+      $('#updated').textContent = `Güncellendi: ${u.toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
       const ageH = (Date.now() - u.getTime()) / 36e5;
       if (ageH > 36 && !S.manifest.demo) showNotice(`Veriler ${Math.floor(ageH / 24)} gündür güncellenmedi. GitHub'da <b>Actions</b> sekmesinden iş akışını kontrol edin.`);
     }
+    const stale = [...(S.manifest.staleMonths || []), ...(S.unreadable || [])];
+    if (stale.length) showNotice(`Şu aylar eski şifreyle kaydedildiği için gösterilemiyor: <b>${[...new Set(stale)].map(trMonth).join(', ')}</b>. GitHub'da <b>Run workflow</b> ile bu ayları yeniden çekin.`);
     if (S.manifest.demo) showNotice('Bu ekran <b>örnek verilerle</b> çalışıyor. Entegra bilgilerinizi GitHub Secrets\'a ekleyip iş akışını çalıştırdığınızda gerçek siparişler gelir.');
 
     const last = S.dates[S.dates.length - 1];
     const t = todayTR();
-    S.g.date = S.byDate.has(t) ? t : last;
-    S.a.month = S.g.date.slice(0, 7);
+    const day = S.byDate.has(t) ? t : last;
+    S.g.start = day; S.g.end = day;
+    S.a.month = day.slice(0, 7);
     S.d.mps = new Set(S.mpOrder);
-    setPreset(S.d.preset);
+    S.r.mps = new Set(S.mpOrder);
+    S.a.list.mps = new Set(S.mpOrder);
+    applyPreset(S.d, S.d.preset);
+    applyPreset(S.r, S.r.preset);
 
-    bindDaily(); bindMonthly(); bindDetail();
-    $$('.tab').forEach((b) => b.addEventListener('click', () => go(b.dataset.view)));
+    bindDaily(); bindMonthly(); bindDetail(); bindReturns(); bindCompare(); bindEdits();
+    $$('.tab').forEach((b) => b.addEventListener('click', () => { go(b.dataset.view); setMenu(false); }));
+    $('#menu-btn').onclick = () => setMenu(!$('#app').classList.contains('menu-open'));
+    $('#scrim').onclick = () => { setMenu(false); closeOrder(); };
+    $('#dr-close').onclick = closeOrder;
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeOrder(); setMenu(false); } });
+    // Sipariş satırına tıklayınca detay paneli
+    document.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr[data-oid]');
+      if (tr && !e.target.closest('a, button, input, select, label')) openOrder(tr.dataset.oid);
+    });
     $('#theme-btn').onclick = () => {
       const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
       const next = cur === 'dark' ? 'light' : 'dark';
@@ -222,28 +329,37 @@
       refreshColors();
       render();
     };
-    $('#lock-btn').onclick = () => { store.del('rapor-sifre'); location.reload(); };
+    $('#lock-btn').onclick = () => { store.del('rapor-giris'); store.del('rapor-sifre'); location.reload(); };
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { refreshColors(); render(); });
     window.addEventListener('hashchange', () => go(location.hash.slice(1), true));
-    go(location.hash.slice(1) || 'gunluk', true);
+    go(location.hash.slice(1) || store.get('son-ekran') || 'gunluk', true);
+  }
+
+  function setMenu(open) {
+    $('#app').classList.toggle('menu-open', open);
+    $('#menu-btn').setAttribute('aria-expanded', String(open));
+    $('#scrim').hidden = !open && !$('#drawer').classList.contains('open');
   }
 
   function showNotice(html) { const n = $('#notice'); n.innerHTML = html; n.classList.remove('hidden'); }
   function applyTheme(t) { if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; }
 
   function go(view, fromHash) {
-    if (!['gunluk', 'aylik', 'detay'].includes(view)) view = 'gunluk';
+    if (!VIEWS.includes(view)) view = 'gunluk';
     S.view = view;
     if (!fromHash && location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`);
     $$('.tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === view)));
     $$('.view').forEach((v) => v.classList.toggle('hidden', v.id !== `view-${view}`));
+    store.set('son-ekran', view);
     render();
   }
 
   function render() {
     if (S.view === 'gunluk') renderDaily();
     else if (S.view === 'aylik') renderMonthly();
-    else renderDetail();
+    else if (S.view === 'detay') renderDetail();
+    else if (S.view === 'karsilastirma') renderCompare();
+    else renderReturns();
   }
 
   // ---------- Ortak hesaplar ----------
@@ -253,35 +369,32 @@
     return out;
   }
 
+  // Satış istatistikleri (iade/iptal hariç, kısmi iadede dönen tutar düşülmüş)
   function stats(list) {
-    const ok = list.filter(valid);
-    const lost = list.filter(isLost);
-    const total = sum(ok, (o) => o.total);
+    const ok = sales(list);
+    const total = sum(ok, amt);
     return {
       count: ok.length,
-      all: list.length,
       total,
-      qty: sum(ok, (o) => o.qty),
+      qty: sum(ok, saleQty),
       avg: ok.length ? total / ok.length : 0,
       commission: sum(ok, (o) => o.commission),
       cargo: sum(ok, (o) => o.cargoPrice),
-      lostCount: lost.length,
-      lostTotal: sum(lost, (o) => o.total),
-      cancel: list.filter((o) => o.sg === 'iptal').length,
-      refund: list.filter((o) => o.sg === 'iade').length,
     };
   }
 
-  function productRows(list, limit) {
+  function productRows(list, itemsOf = saleItems, limit) {
     const m = new Map();
     for (const o of list) {
-      for (const it of o.items || []) {
+      for (const it of itemsOf(o)) {
         const k = it.sku || it.name;
-        const r = m.get(k) || { sku: it.sku, name: it.name, qty: 0, total: 0, orders: new Set(), mps: new Map() };
+        const r = m.get(k) || { sku: it.sku, name: it.name, qty: 0, total: 0, orders: new Set(), mps: new Map(), types: {} };
         r.qty += it.qty;
         r.total += it.total;
         r.orders.add(o.id);
         r.mps.set(o.mp, (r.mps.get(o.mp) || 0) + it.total);
+        const t = isLost(o) ? o.sg : (it.r || 'iade');
+        r.types[t] = (r.types[t] || 0) + it.qty;
         m.set(k, r);
       }
     }
@@ -290,8 +403,30 @@
     return limit ? rows.slice(0, limit) : rows;
   }
 
+  // Küçük seyir eğrisi (özet kartlarında): son noktayı vurgular
+  function sparkSvg(vals) {
+    const v = (vals || []).map((x) => (Number.isFinite(x) ? x : 0));
+    if (v.length < 2 || !v.some((x) => x > 0)) return '';
+    const W = 92; const H = 38; const p = 3;
+    const max = Math.max(...v); const min = Math.min(...v, 0);
+    const xs = (i) => p + (i * (W - 2 * p)) / (v.length - 1);
+    const ys = (x) => H - p - ((x - min) / (max - min || 1)) * (H - 2 * p);
+    const pts = v.map((x, i) => `${xs(i).toFixed(1)},${ys(x).toFixed(1)}`);
+    const last = v.length - 1;
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="M${pts[0]} L${pts.join(' L')} L${xs(last)},${H - p} L${xs(0)},${H - p} Z" fill="var(--accent)" opacity=".08"/>`
+      + `<polyline points="${pts.join(' ')}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>`
+      + `<circle cx="${xs(last)}" cy="${ys(v[last])}" r="2.6" fill="var(--accent)" stroke="var(--surface)" stroke-width="1.5"/></svg>`;
+  }
   function kpiHtml(items) {
-    return items.map((k) => `<div class="kpi"><div class="k">${k.k}</div><div class="v">${k.v}</div><div class="d">${k.d || '&nbsp;'}</div></div>`).join('');
+    return items.map((k) => `<div class="kpi"><div class="k">${k.k}</div><div class="v" title="${esc(String(k.v).replace(/<[^>]+>/g, ''))}">${k.v}</div><div class="d">${k.d || '&nbsp;'}</div>${sparkSvg(k.spark)}</div>`).join('');
+  }
+  // Gün gün değer dizisi (özet kartı eğrileri için)
+  function daySeries(start, end, fn, filter = () => true, maxDays = 60) {
+    let a = start;
+    if (dayCount(start, end) > maxDays) a = addDays(end, -(maxDays - 1));
+    const out = [];
+    for (let d = a; d <= end; d = addDays(d, 1)) out.push(fn((S.byDate.get(d) || []).filter(filter)));
+    return out;
   }
 
   // Basit tablo oluşturucu
@@ -303,49 +438,97 @@
       const arrow = sort && sort.k === c.key ? (sort.dir > 0 ? ' ↑' : ' ↓') : '';
       return `<th class="${c.num ? 'num' : ''}${s}">${c.label}${arrow}</th>`;
     }).join('');
-    const body = rows.map((r) => `<tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''}${c.cls ? ` ${c.cls}` : ''}"${c.title ? ` title="${esc(c.title(r))}"` : ''}>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}</tr>`).join('');
-    const foot = opts.foot ? `<tfoot><tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''}">${opts.foot[c.key] ?? ''}</td>`).join('')}</tr></tfoot>` : '';
+    const body = rows.map((r) => `<tr${opts.rowAttr ? ` ${opts.rowAttr(r)}` : ''}>${cols.map((c) => `<td class="${c.num ? 'num' : ''}${c.cls ? ` ${c.cls}` : ''}"${c.title ? ` title="${esc(c.title(r))}"` : ''}>${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}</tr>`).join('');
+    // foot: tek satır (nesne) ya da birden çok satır (dizi)
+    const feet = opts.foot ? (Array.isArray(opts.foot) ? opts.foot : [opts.foot]) : [];
+    const foot = feet.length ? `<tfoot>${feet.map((f) => `<tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''}">${f[c.key] ?? ''}</td>`).join('')}</tr>`).join('')}</tfoot>` : '';
     el.innerHTML = `<thead><tr>${head}</tr></thead><tbody>${body}</tbody>${foot}`;
     if (sort && opts.onSort) {
       $$('th.sortable', el).forEach((th) => th.addEventListener('click', () => {
         const k = th.dataset.k;
-        if (sort.k === k) sort.dir *= -1; else { sort.k = k; sort.dir = -1; }
+        const col = cols.find((c) => c.key === k);
+        if (sort.k === k) sort.dir *= -1; else { sort.k = k; sort.dir = col && !col.num ? 1 : -1; }
         opts.onSort();
       }));
     }
   }
 
   const shareBar = (v, max, color) => `<span class="bar-cell">${pct(max ? v / max : 0)}<span class="track"><span class="fill" style="width:${max ? Math.max(2, (v / max) * 100) : 0}%;background:${color}"></span></span></span>`;
-  const itemsText = (o) => {
-    const it = o.items || [];
-    if (!it.length) return '—';
-    const first = `${esc(it[0].name)}${it[0].qty > 1 ? ` ×${it[0].qty}` : ''}`;
-    return it.length > 1 ? `${first} <span style="color:var(--muted)">+${it.length - 1} ürün</span>` : first;
+  const itemsText = (its, extraNote = '') => {
+    if (!its.length) return '—';
+    const first = `${esc(its[0].name)}${its[0].qty > 1 ? ` ×${its[0].qty}` : ''}`;
+    return (its.length > 1 ? `${first} <span style="color:var(--muted)">+${its.length - 1} ürün</span>` : first) + extraNote;
   };
-  const statusPill = (o) => `<span class="pill ${o.sg}">${esc(o.status || STATUS[o.sg])}</span>`;
+  const itemsTitle = (its) => its.map((i) => `${i.qty} × ${i.name}${i.sku ? ` (${i.sku})` : ''}${i.r ? ' — iade' : ''}`).join('\n');
+  const rawStatusPill = (o) => `<span class="pill ${o.sg}">${esc(o.status || STATUS[o.sg])}</span>`;
 
-  function ordersTable(el, pagerEl, list, state, rerender, sortable) {
-    const PAGE = 50;
+  // Sayfalama
+  function paged(list, state, PAGE = 50) {
     const pages = Math.max(1, Math.ceil(list.length / PAGE));
     state.page = Math.min(state.page, pages - 1);
-    const rows = list.slice(state.page * PAGE, state.page * PAGE + PAGE);
+    return { rows: list.slice(state.page * PAGE, state.page * PAGE + PAGE), pages, PAGE };
+  }
+  function pager(el, total, state, { pages, PAGE }, rerender, anchor, noun = 'sipariş') {
+    if (total <= PAGE) { el.innerHTML = total ? `${n0(total)} ${noun}` : ''; return; }
+    el.innerHTML = `<span>${n0(state.page * PAGE + 1)}–${n0(Math.min(total, (state.page + 1) * PAGE))} / ${n0(total)} ${noun}</span>
+      <span class="controls"><button class="btn" data-p="-1" ${state.page === 0 ? 'disabled' : ''}>‹ Önceki</button>
+      <span>Sayfa ${state.page + 1} / ${pages}</span>
+      <button class="btn" data-p="1" ${state.page >= pages - 1 ? 'disabled' : ''}>Sonraki ›</button></span>`;
+    $$('button[data-p]', el).forEach((b) => b.addEventListener('click', () => { state.page += +b.dataset.p; rerender(); anchor.closest('.card').scrollIntoView({ block: 'start', behavior: 'smooth' }); }));
+  }
+
+  // Satış siparişleri tablosu (Günlük ve Detaylı ekran): durum, kargo ve şehir gösterilmez
+  function ordersTable(el, pagerEl, list, state, rerender, sortable) {
+    const pg = paged(list, state);
     table(el, [
       { key: 'date', label: 'Tarih', sort: true, render: (o) => `${trDate(o.date)} <span style="color:var(--muted)">${o.time || ''}</span>` },
       { key: 'no', label: 'Sipariş no', sort: true, render: (o) => esc(o.no || o.id) },
       { key: 'mp', label: 'Pazaryeri', sort: true, render: (o) => mpCell(o.mp) },
-      { key: 'items', label: 'Ürünler', cls: 'trunc', render: itemsText, title: (o) => (o.items || []).map((i) => `${i.qty} × ${i.name}${i.sku ? ` (${i.sku})` : ''}`).join('\n') },
-      { key: 'qty', label: 'Adet', num: true, sort: true, render: (o) => n0(o.qty) },
-      { key: 'total', label: 'Tutar', num: true, sort: true, render: (o) => tl2(o.total) },
-      { key: 'sg', label: 'Durum', sort: true, render: statusPill },
-      { key: 'carrier', label: 'Kargo', render: (o) => esc(o.carrier || '—') },
-      { key: 'city', label: 'Şehir', sort: true, render: (o) => esc(o.city || '—') },
-    ], rows, { empty: 'Sipariş yok.', sort: sortable ? state.sort : null, onSort: () => { state.page = 0; rerender(); } });
-    if (list.length <= PAGE) { pagerEl.innerHTML = list.length ? `${n0(list.length)} sipariş` : ''; return; }
-    pagerEl.innerHTML = `<span>${n0(state.page * PAGE + 1)}–${n0(Math.min(list.length, (state.page + 1) * PAGE))} / ${n0(list.length)} sipariş</span>
-      <span class="controls"><button class="btn" data-p="-1" ${state.page === 0 ? 'disabled' : ''}>‹ Önceki</button>
-      <span>Sayfa ${state.page + 1} / ${pages}</span>
-      <button class="btn" data-p="1" ${state.page >= pages - 1 ? 'disabled' : ''}>Sonraki ›</button></span>`;
-    $$('button[data-p]', pagerEl).forEach((b) => b.addEventListener('click', () => { state.page += +b.dataset.p; rerender(); el.closest('.card').scrollIntoView({ block: 'start', behavior: 'smooth' }); }));
+      { key: 'items', label: 'Ürünler', sort: true, cls: 'trunc', render: (o) => itemsText(saleItems(o).length || !o.items?.length ? saleItems(o) : o.items, o.sg === 'kismi' ? ` <span class="pill kismi">${n0(retQty(o))} ürün iade</span>` : ''), title: (o) => itemsTitle(o.items || []) },
+      { key: 'qty', label: 'Adet', num: true, sort: true, render: (o) => n0(saleQty(o)) },
+      { key: 'total', label: 'Tutar', num: true, sort: true, render: (o) => tl2(amt(o)) },
+    ], pg.rows, { empty: 'Sipariş yok.', sort: sortable ? state.sort : null, onSort: () => { state.page = 0; rerender(); }, rowAttr: (o) => `class="clickable" data-oid="${esc(o.id)}"` });
+    pager(pagerEl, list.length, state, pg, rerender, el);
+  }
+
+  const firstItemName = (o) => (saleItems(o)[0] || o.items?.[0] || {}).name || '';
+  const ORDER_SORT = { items: firstItemName, qty: saleQty, total: amt };
+  function sortOrders(list, sk, val) {
+    return [...list].sort((a, b) => {
+      let va; let vb;
+      if (sk.k === 'date') { va = a.date + a.time; vb = b.date + b.time; }
+      else if (sk.k === 'mp') { va = mpLabel(a.mp); vb = mpLabel(b.mp); }
+      else if (val && val[sk.k]) { va = val[sk.k](a); vb = val[sk.k](b); }
+      else { va = a[sk.k]; vb = b[sk.k]; }
+      return (typeof va === 'number' ? va - vb : String(va ?? '').localeCompare(String(vb ?? ''), 'tr', { sensitivity: 'base' })) * sk.dir;
+    });
+  }
+
+  // Tarih hazır aralıkları
+  function applyPreset(st, p) {
+    const t = todayTR();
+    const last = S.dates[S.dates.length - 1] > t ? S.dates[S.dates.length - 1] : t;
+    st.preset = p;
+    if (p === 'custom') return;
+    let start; let end = t;
+    if (p === 'yesterday') { start = addDays(t, -1); end = start; }
+    else if (/^\d+$/.test(p)) start = addDays(t, -(+p - 1));
+    else if (p === 'thisMonth') start = `${t.slice(0, 7)}-01`;
+    else if (p === 'lastMonth') { const lm = addMonths(t.slice(0, 7), -1); start = `${lm}-01`; end = `${lm}-${String(daysInMonth(lm)).padStart(2, '0')}`; }
+    else if (p === 'thisYear') start = `${t.slice(0, 4)}-01-01`;
+    else { start = S.dates[0]; end = last; }
+    st.start = start; st.end = end;
+  }
+
+  function mpChips(el, set, rerender) {
+    const all = set.size === S.mpOrder.length;
+    el.innerHTML = `<button class="chip" data-all aria-pressed="${all}">Tümü</button>` +
+      S.mpOrder.map((k) => `<button class="chip" data-k="${esc(k)}" aria-pressed="${set.has(k)}">${sw(k)}${esc(mpLabel(k))}</button>`).join('');
+    $$('.chip', el).forEach((c) => c.addEventListener('click', () => {
+      if (c.hasAttribute('data-all')) { if (all) set.clear(); else S.mpOrder.forEach((k) => set.add(k)); }
+      else if (set.has(c.dataset.k)) set.delete(c.dataset.k); else set.add(c.dataset.k);
+      rerender();
+    }));
   }
 
   // ---------- Grafikler ----------
@@ -353,7 +536,6 @@
     el.innerHTML = groups.length > 1 ? groups.map((g) => `<span><span class="sw" style="background:${g.color}"></span>${esc(g.label)}</span>`).join('') : '';
   }
 
-  // Kütüphanesiz yığılmış çubuk grafik (SVG) — üzerine gelince ayrıntı kutusu gösterir
   function niceMax(v) {
     if (v <= 0) return { max: 4, step: 1 };
     const raw = v / 4;
@@ -447,7 +629,90 @@
     svg.addEventListener('pointerleave', hide);
   }
 
-  // Siparişleri zaman kovalarına ve pazaryeri gruplarına dağıtır
+
+  // ---------- Halka grafik: pazaryeri payı ----------
+  function donut(el, list) {
+    const groups = chartGroups(S.mpOrder);
+    const items = groups.map((g) => ({ ...g, value: sum(list.filter((o) => g.members.includes(o.mp)), amt) })).filter((g) => g.value > 0).sort((a, b) => b.value - a.value);
+    const total = sum(items, (g) => g.value);
+    if (!total) { el.innerHTML = '<p class="empty">Bu aralıkta satış yok.</p>'; return; }
+    const R = 74; const C = 2 * Math.PI * R; const gap = items.length > 1 ? 2.5 : 0;
+    let off = 0;
+    const segs = items.map((g) => {
+      const len = (g.value / total) * C;
+      const seg = `<circle cx="95" cy="95" r="${R}" fill="none" stroke="${g.color}" stroke-width="24" stroke-dasharray="${Math.max(0.5, len - gap)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 95 95)"><title>${esc(g.label)}: ${tl(g.value)} (${pct(g.value / total)})</title></circle>`;
+      off += len;
+      return seg;
+    }).join('');
+    el.innerHTML = `<svg viewBox="0 0 190 190" role="img" aria-label="Pazaryeri payı">${segs}
+      <text x="95" y="91" text-anchor="middle" class="donut-center-v">${esc(fmtCompact.format(total))} ₺</text>
+      <text x="95" y="110" text-anchor="middle" class="donut-center-k">toplam ciro</text></svg>
+      <div class="donut-legend">${items.map((g) => `<div class="row"><span class="sw" style="background:${g.color}"></span><span>${esc(g.label)}</span><b>${tl(g.value)}</b><small>${pct(g.value / total)}</small></div>`).join('')}</div>`;
+  }
+
+  // ---------- Isı haritası: gün × saat ortalama sipariş ----------
+  function heatmap(el, list, start, end) {
+    const order = [1, 2, 3, 4, 5, 6, 0];
+    const daysOf = Array(7).fill(0);
+    for (let x = start; x <= end; x = addDays(x, 1)) daysOf[D(x).getUTCDay()]++;
+    const cnt = Array.from({ length: 7 }, () => Array(24).fill(0));
+    for (const o of list) if (o.time) cnt[D(o.date).getUTCDay()][+o.time.slice(0, 2)]++;
+    const avg = cnt.map((row, g) => row.map((c) => (daysOf[g] ? c / daysOf[g] : 0)));
+    const max = Math.max(0, ...avg.flat());
+    if (!max) { el.innerHTML = '<p class="empty">Saat bilgisi olan sipariş yok.</p>'; return; }
+    const f1 = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 1 });
+    const shade = (v) => (v ? `color-mix(in srgb, var(--s1) ${Math.round(14 + 86 * (v / max))}%, var(--surface-2))` : 'var(--surface-2)');
+    let h = '<div></div>' + Array.from({ length: 24 }, (_, i) => `<div class="hh">${i % 3 === 0 ? String(i).padStart(2, '0') : ''}</div>`).join('');
+    for (const g of order) {
+      h += `<div class="hl">${DAYS[g]}</div>` + avg[g].map((v, i) => `<div class="hc" style="background:${shade(v)}" title="${DAYS[g]} ${String(i).padStart(2, '0')}:00 · ortalama ${f1.format(v)} sipariş"></div>`).join('');
+    }
+    el.innerHTML = h;
+    const scale = el.parentElement.nextElementSibling?.classList.contains('heat-scale') ? el.parentElement.nextElementSibling : null;
+    const sc = `<span>az</span>${[0.1, 0.3, 0.5, 0.7, 1].map((r) => `<i style="background:${shade(r * max)}"></i>`).join('')}<span>çok · en yoğun saat ortalama ${f1.format(max)} sipariş</span>`;
+    if (scale) scale.innerHTML = sc; else el.parentElement.insertAdjacentHTML('afterend', `<div class="heat-scale">${sc}</div>`);
+  }
+
+  // ---------- Sipariş detay paneli ----------
+  function openOrder(id) {
+    const o = S.byId?.get(String(id));
+    if (!o) return;
+    $('#dr-mp').innerHTML = `${sw(o.mp)}${esc(mpLabel(o.mp))}`;
+    $('#dr-title').textContent = o.no || o.id;
+    const its = o.items || [];
+    const rows = [
+      ['Tarih', `${trDateLong(o.date)}${o.time ? `, ${o.time}` : ''}`],
+      o.customer ? ['Müşteri', esc(o.customer)] : null,
+      o.city ? ['Şehir', esc(o.city)] : null,
+      o.carrier ? ['Kargo', esc(o.carrier)] : null,
+      o.changed ? ['Son güncelleme', `${trDate(o.changed)} ${o.changed.slice(11, 16)}`] : null,
+      o.edited ? ['Elle düzeltme', o.edited.pending ? '<span class="edit-badge pending">kaydedilmedi</span>' : `${o.edited.by ? esc(o.edited.by) : 'Düzeltildi'}${o.edited.at ? ` · ${trDate(o.edited.at.slice(0, 10))} ${o.edited.at.slice(11, 16)}` : ''}`] : null,
+      ['Entegra no', esc(o.id)],
+    ].filter(Boolean);
+    const ret = retAmt(o);
+    $('#dr-body').innerHTML = `<div><span class="pill ${o.sg}">${esc(o.status || STATUS[o.sg])}</span></div>
+      <dl class="dl">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+      <div><h3 class="section-title" style="margin:0 0 8px">Ürünler (${its.length})</h3>
+        <div class="drawer-items">${its.length ? its.map((i) => `<div class="it${i.r || isLost(o) ? ' ret' : ''}"><span>${esc(i.name)}${i.r ? ' <span class="pill iade">iade</span>' : ''}</span><span class="amt">${tl2(i.total)}</span><small>${i.sku ? `${esc(i.sku)} · ` : ''}${n0(i.qty)} adet${i.qty > 1 ? ` · birim ${tl2(i.total / i.qty)}` : ''}${i.orig ? ` · <s>${n0(i.orig.qty)} adet, ${tl2(i.orig.total)}</s>` : ''}${i.synth ? ' · elle düzeltmeden' : ''}</small></div>`).join('') : '<div class="it"><span>Ürün bilgisi yok</span></div>'}</div></div>
+      <div class="drawer-tot">
+        <span>Sipariş tutarı</span><b>${tl2(o.total)}</b>
+        ${ret ? `<span>İade / iptal</span><b class="ret-amt">− ${tl2(ret)}</b>` : ''}
+        ${o.commission ? `<span>Komisyon</span><b>${tl2(o.commission)}</b>` : ''}
+        ${o.cargoPrice ? `<span>Kargo maliyeti</span><b>${tl2(o.cargoPrice)}</b>` : ''}
+        <span class="big">Satış</span><b class="big">${tl2(amt(o))}</b>
+      </div>`;
+    $('#drawer').classList.add('open');
+    $('#drawer').setAttribute('aria-hidden', 'false');
+    $('#scrim').hidden = false;
+    $('#dr-close').focus();
+  }
+  function closeOrder() {
+    if (!$('#drawer').classList.contains('open')) return;
+    $('#drawer').classList.remove('open');
+    $('#drawer').setAttribute('aria-hidden', 'true');
+    $('#scrim').hidden = !$('#app').classList.contains('menu-open');
+  }
+
+  // Satışları zaman kovalarına ve pazaryeri gruplarına dağıtır
   function seriesBy(list, bucketKeys, bucketOf, metric, keys) {
     const groups = chartGroups(keys || S.mpOrder);
     const idx = new Map(bucketKeys.map((b, i) => [b, i]));
@@ -458,40 +723,58 @@
       const b = idx.get(bucketOf(o));
       const g = gi.get(o.mp);
       if (b === undefined || g === undefined) continue;
-      groups[g].data[b] += metric === 'count' ? 1 : metric === 'qty' ? o.qty : o.total;
+      groups[g].data[b] += metric === 'count' ? 1 : metric === 'qty' ? saleQty(o) : amt(o);
     }
     return groups.filter((g) => g.data.some((v) => v > 0));
   }
 
-  // ---------- GÜNLÜK ----------
+  // ---------- GÜNLÜK (gün veya gün aralığı) ----------
+  function setDaily(start, end) {
+    if (!start || !end) return;
+    if (start > end) [start, end] = [end, start];
+    S.g.start = start; S.g.end = end; S.g.page = 0;
+    renderDaily();
+  }
+
   function bindDaily() {
-    const di = $('#g-date');
-    di.min = S.dates[0];
-    di.max = todayTR() > S.dates[S.dates.length - 1] ? todayTR() : S.dates[S.dates.length - 1];
-    di.onchange = () => { if (di.value) { S.g.date = di.value; S.g.page = 0; renderDaily(); } };
-    $('#g-prev').onclick = () => { S.g.date = addDays(S.g.date, -1); S.g.page = 0; renderDaily(); };
-    $('#g-next').onclick = () => { S.g.date = addDays(S.g.date, 1); S.g.page = 0; renderDaily(); };
-    $('#g-today').onclick = () => { S.g.date = todayTR(); S.g.page = 0; renderDaily(); };
-    $('#g-csv').onclick = () => exportOrders(S.byDate.get(S.g.date) || [], `siparisler-${S.g.date}`);
+    const min = S.dates[0];
+    const max = todayTR() > S.dates[S.dates.length - 1] ? todayTR() : S.dates[S.dates.length - 1];
+    for (const id of ['#g-start', '#g-end']) { $(id).min = min; $(id).max = max; }
+    $('#g-start').onchange = (e) => { const v = e.target.value; if (v) setDaily(v, S.g.end < v ? v : S.g.end); };
+    $('#g-end').onchange = (e) => { const v = e.target.value; if (v) setDaily(S.g.start > v ? v : S.g.start, v); };
+    const shift = (dir) => { const n = dayCount(S.g.start, S.g.end); setDaily(addDays(S.g.start, dir * n), addDays(S.g.end, dir * n)); };
+    $('#g-prev').onclick = () => shift(-1);
+    $('#g-next').onclick = () => shift(1);
+    $('#g-today').onclick = () => setDaily(todayTR(), todayTR());
+    $('#g-yesterday').onclick = () => { const y = addDays(todayTR(), -1); setDaily(y, y); };
+    $('#g-csv').onclick = () => exportOrders(sales(ordersBetween(S.g.start, S.g.end)), S.g.start === S.g.end ? `siparisler-${S.g.start}` : `siparisler-${S.g.start}_${S.g.end}`);
   }
 
   function renderDaily() {
-    const day = S.g.date;
-    $('#g-date').value = day;
-    $('#g-title').textContent = day === todayTR() ? 'Bugün' : day === addDays(todayTR(), -1) ? 'Dün' : 'Günlük Rapor';
-    $('#g-sub').textContent = trDateLong(day);
-    const list = S.byDate.get(day) || [];
-    const prevDay = addDays(day, -1);
-    const prevList = S.byDate.get(prevDay) || [];
-    const weekAgo = S.byDate.get(addDays(day, -7)) || [];
-    const s = stats(list); const p = stats(prevList); const w = stats(weekAgo);
+    const { start, end } = S.g;
+    const n = dayCount(start, end);
+    const single = n === 1;
+    $('#g-start').value = start; $('#g-end').value = end;
+    $('#g-title').textContent = single ? (start === todayTR() ? 'Bugün' : start === addDays(todayTR(), -1) ? 'Dün' : 'Günlük Rapor') : 'Seçilen Günler';
+    $('#g-sub').textContent = trRange(start, end);
 
+    const list = sales(ordersBetween(start, end));
+    const prevList = sales(ordersBetween(addDays(start, -n), addDays(start, -1)));
+    const s = stats(list); const p = stats(prevList);
+    const cmp = single ? 'önceki güne göre' : `önceki ${n} güne göre`;
+    const extra = [];
+    if (n <= 7) {
+      const w = stats(ordersBetween(addDays(start, -7), addDays(end, -7)));
+      extra.push(single ? `geçen hafta bugün ${n0(w.count)}` : `geçen hafta aynı günler ${n0(w.count)}`);
+    }
+
+    // Kart eğrileri: tek günde son 14 gün, aralıkta seçili günler
+    const gs = (fn) => daySeries(n >= 14 ? start : addDays(end, -13), end, fn);
     $('#g-kpis').innerHTML = kpiHtml([
-      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} önceki güne göre` },
-      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)} · geçen hafta bugün ${n0(w.count)}` },
-      { k: 'Satılan ürün', v: n0(s.qty), d: `önceki gün ${n0(p.qty)}` },
-      { k: 'Ortalama sepet', v: tl(s.avg), d: `önceki gün ${tl(p.avg)}` },
-      { k: 'İptal / İade', v: `${n0(s.cancel)} / ${n0(s.refund)}`, d: s.lostTotal ? `${tl(s.lostTotal)} tutarında` : 'yok' },
+      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} ${cmp}`, spark: gs((l) => stats(l).total) },
+      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)}${extra.length ? ` · ${extra[0]}` : ` ${cmp}`}`, spark: gs((l) => stats(l).count) },
+      { k: 'Satılan ürün', v: n0(s.qty), d: `${delta(s.qty, p.qty) || ''} ${single ? 'önceki gün' : 'önceki dönem'} ${n0(p.qty)}`, spark: gs((l) => stats(l).qty) },
+      { k: 'Ortalama sepet', v: tl(s.avg), d: `${delta(s.avg, p.avg) || ''} ${single ? 'önceki gün' : 'önceki dönem'} ${tl(p.avg)}`, spark: gs((l) => stats(l).avg) },
     ]);
 
     // Pazaryeri tablosu
@@ -505,34 +788,47 @@
       { key: 'total', label: 'Ciro', num: true, render: (r) => tl(r.total) },
       { key: 'share', label: 'Pay', num: true, render: (r) => shareBar(r.total, s.total, mpColor(r.k)) },
       { key: 'avg', label: 'Ort. sepet', num: true, render: (r) => tl(r.avg) },
-      { key: 'lost', label: 'İptal/İade', num: true, render: (r) => n0(r.lostCount) },
-      { key: 'd', label: 'Önceki gün', num: true, render: (r) => delta(r.total, r.prev) || '—' },
-    ], rows, { empty: 'Bu gün için sipariş yok.', foot: rows.length > 1 ? { k: 'Toplam', count: n0(s.count), qty: n0(s.qty), total: tl(s.total), avg: tl(s.avg), lost: n0(s.lostCount), d: delta(s.total, p.total) } : null });
+      { key: 'd', label: single ? 'Önceki gün' : 'Önceki dönem', num: true, render: (r) => delta(r.total, r.prev) || '—' },
+    ], rows, { empty: 'Bu tarihlerde sipariş yok.', foot: rows.length > 1 ? { k: 'Toplam', count: n0(s.count), qty: n0(s.qty), total: tl(s.total), avg: tl(s.avg), d: delta(s.total, p.total) } : null });
+
+    donut($('#g-donut'), list);
 
     // Saatlik
     const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
-    const timed = list.filter((o) => o.time);
-    const hg = seriesBy(timed, hours, (o) => o.time.slice(0, 2), 'count');
+    const hg = seriesBy(list.filter((o) => o.time), hours, (o) => o.time.slice(0, 2), 'count');
+    $('#g-hour-sub').textContent = single ? 'Pazaryerine göre sipariş sayısı' : `${n} günün toplamı, pazaryerine göre`;
     legend($('#g-hour-legend'), hg);
-    stackedBar('g-hour', hours.map((h) => `${h}`), hg, { money: false, tooltipTitle: (i) => `${hours[i]}:00 – ${hours[i]}:59` });
+    stackedBar('g-hour', hours, hg, { money: false, tooltipTitle: (i) => `${hours[i]}:00 – ${hours[i]}:59` });
 
-    // Son 14 gün
-    const days = Array.from({ length: 14 }, (_, i) => addDays(day, i - 13));
-    const tg = seriesBy(ordersBetween(days[0], day).filter(valid), days, (o) => o.date, 'total');
+    // Son 14 gün (bitiş gününe kadar)
+    const days = Array.from({ length: 14 }, (_, i) => addDays(end, i - 13));
+    const tg = seriesBy(sales(ordersBetween(days[0], end)), days, (o) => o.date, 'total');
     legend($('#g-trend-legend'), tg);
     stackedBar('g-trend', days.map((d) => `${d.slice(8, 10)}.${d.slice(5, 7)}`), tg, { tooltipTitle: (i) => trDateLong(days[i]) });
 
     // Ürünler
-    const prods = productRows(list.filter(valid)).sort((a, b) => b.qty - a.qty).slice(0, 10);
+    // Günün ürünleri: tamamı, başlığa tıklayarak sıralanır (ürün adında ilk tıklama A→Z)
+    $('#g-products-title').textContent = single ? 'Günün ürünleri' : 'Seçilen günlerin ürünleri';
+    const ps = S.g.psort;
+    const prods = productRows(list).sort((a, b) => {
+      const va = a[ps.k]; const vb = b[ps.k];
+      const c = typeof va === 'string' ? String(va).localeCompare(String(vb), 'tr', { sensitivity: 'base' }) : va - vb;
+      return c * ps.dir || b.qty - a.qty;
+    });
+    $('#g-products-sub').textContent = `${n0(prods.length)} ürün · başlıklara tıklayarak sıralayın`;
     table($('#g-products'), [
-      { key: 'name', label: 'Ürün', cls: 'trunc', render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'sku', label: 'Stok kodu', sort: true, render: (r) => esc(r.sku || '—') },
       { key: 'mps', label: 'Pazaryeri', render: (r) => [...r.mps.keys()].map((k) => `<span title="${esc(mpLabel(k))}" class="sw" style="display:inline-block;margin-right:3px;background:${mpColor(k)}"></span>`).join('') },
-      { key: 'qty', label: 'Adet', num: true, render: (r) => n0(r.qty) },
-      { key: 'total', label: 'Ciro', num: true, render: (r) => tl(r.total) },
-    ], prods, { empty: 'Satış yok.' });
+      { key: 'orderCount', label: 'Sipariş', num: true, sort: true, render: (r) => n0(r.orderCount) },
+      { key: 'qty', label: 'Adet', num: true, sort: true, render: (r) => n0(r.qty) },
+      { key: 'total', label: 'Ciro', num: true, sort: true, render: (r) => tl(r.total) },
+    ], prods, { empty: 'Satış yok.', sort: ps, onSort: renderDaily, foot: prods.length > 1 ? { name: 'Toplam', qty: n0(sum(prods, (r) => r.qty)), total: tl(sum(prods, (r) => r.total)) } : null });
 
-    $('#g-orders-sub').textContent = `${n0(list.length)} sipariş (iptal/iade dahil)`;
-    ordersTable($('#g-orders'), $('#g-pager'), [...list].reverse(), S.g, renderDaily, false);
+    $('#g-orders-title').textContent = single ? 'Günün siparişleri' : 'Seçilen günlerin siparişleri';
+    $('#g-orders-sub').textContent = `${n0(list.length)} sipariş · iade ve iptaller hariç · başlıklara tıklayarak sıralayın`;
+    // Günün siparişleri: başlığa tıklayarak sıralanır (Ürünler'de ilk tıklama A→Z)
+    ordersTable($('#g-orders'), $('#g-pager'), sortOrders(list, S.g.sort, ORDER_SORT), S.g, renderDaily, true);
   }
 
   // ---------- AYLIK ----------
@@ -543,7 +839,13 @@
     mi.onchange = () => { if (mi.value) { S.a.month = mi.value; renderMonthly(); } };
     $('#a-prev').onclick = () => { S.a.month = addMonths(S.a.month, -1); renderMonthly(); };
     $('#a-next').onclick = () => { S.a.month = addMonths(S.a.month, 1); renderMonthly(); };
-    $('#a-metric').onchange = renderMonthly;
+    let tmr;
+    $('#a-list-q').oninput = (e) => { clearTimeout(tmr); tmr = setTimeout(() => { S.a.list.q = e.target.value.trim(); S.a.list.page = 0; renderMonthList(S.a.list.src); }, 200); };
+    $('#a-list-csv').onclick = () => {
+      const rows = monthListRows(S.a.list.src);
+      download([['Tarih', 'Saat', 'Sipariş No', 'Pazaryeri', 'Müşteri', 'Stok Kodu', 'Ürün', 'Adet', 'Satış Fiyatı', 'Tutar'],
+        ...rows.map((r) => [trDate(r.o.date), r.o.time, r.no, r.mp, r.customer, r.sku, r.name, r.qty, r2(r.price), r2(r.total)])], `siparis-listesi-${S.a.month}`);
+    };
   }
 
   function renderMonthly() {
@@ -556,37 +858,30 @@
     const today = todayTR();
     const isCurrent = today.slice(0, 7) === m;
     const elapsed = isCurrent ? +today.slice(8, 10) : dim;
-    const list = ordersBetween(start, end);
+    const list = sales(ordersBetween(start, end));
 
     const pm = addMonths(m, -1);
-    const pmEnd = `${pm}-${String(Math.min(elapsed, daysInMonth(pm))).padStart(2, '0')}`;
-    const prevList = ordersBetween(`${pm}-01`, isCurrent ? pmEnd : `${pm}-${String(daysInMonth(pm)).padStart(2, '0')}`);
+    const pmFullEnd = `${pm}-${String(daysInMonth(pm)).padStart(2, '0')}`;
+    const pmEnd = isCurrent ? `${pm}-${String(Math.min(elapsed, daysInMonth(pm))).padStart(2, '0')}` : pmFullEnd;
+    const prevList = sales(ordersBetween(`${pm}-01`, pmEnd));
     const s = stats(list); const p = stats(prevList);
     const cmp = isCurrent ? 'geçen ayın aynı dönemine göre' : 'önceki aya göre';
-    $('#a-sub').textContent = isCurrent ? `Ayın ${elapsed}. günü · ${dim - elapsed} gün kaldı` : `${dim} gün`;
+    $('#a-sub').textContent = isCurrent ? `Ayın ${elapsed}. günü · ${dim - elapsed} gün kaldı · iade ve iptaller hariç` : `${dim} gün · iade ve iptaller hariç`;
 
+    const as = (fn) => daySeries(start, today < end ? today : end, fn);
     const kp = [
-      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} ${cmp}` },
-      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)} ${cmp}` },
-      { k: 'Satılan ürün', v: n0(s.qty), d: delta(s.qty, p.qty) },
-      { k: 'Ortalama sepet', v: tl(s.avg), d: `önceki ${tl(p.avg)}` },
+      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} ${cmp}`, spark: as((l) => stats(l).total) },
+      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)} ${cmp}`, spark: as((l) => stats(l).count) },
+      { k: 'Satılan ürün', v: n0(s.qty), d: `${delta(s.qty, p.qty) || ''} ${cmp}`, spark: as((l) => stats(l).qty) },
+      { k: 'Ortalama sepet', v: tl(s.avg), d: `${delta(s.avg, p.avg) || ''} önceki ${tl(p.avg)}`, spark: as((l) => stats(l).avg) },
       { k: 'Günlük ortalama', v: tl(s.total / elapsed), d: `${n0(s.count / elapsed)} sipariş / gün` },
-      { k: 'İptal / İade oranı', v: pct(s.all ? s.lostCount / s.all : 0), d: `${n0(s.cancel)} iptal · ${n0(s.refund)} iade` },
     ];
     if (isCurrent && elapsed > 2) kp.push({ k: 'Ay sonu tahmini', v: tl((s.total / elapsed) * dim), d: 'bugünkü hıza göre' });
     $('#a-kpis').innerHTML = kpiHtml(kp);
 
-    const metric = $('#a-metric').value;
-    $('#a-daily-title').textContent = metric === 'count' ? 'Günlük sipariş adedi' : 'Günlük ciro';
-    const days = Array.from({ length: dim }, (_, i) => `${m}-${String(i + 1).padStart(2, '0')}`);
-    const dg = seriesBy(list.filter(valid), days, (o) => o.date, metric);
-    legend($('#a-daily-legend'), dg);
-    stackedBar('a-daily', days.map((d) => d.slice(8, 10)), dg, { money: metric !== 'count', tooltipTitle: (i) => trDateLong(days[i]) });
-
     // Pazaryeri tablosu
     const byMp = groupBy(list, (o) => o.mp);
-    const fullPrev = ordersBetween(`${pm}-01`, `${pm}-${String(daysInMonth(pm)).padStart(2, '0')}`);
-    const prevBy = groupBy(isCurrent ? prevList : fullPrev, (o) => o.mp);
+    const prevBy = groupBy(prevList, (o) => o.mp);
     const rows = [...byMp.entries()].map(([k, l]) => ({ k, ...stats(l), prev: stats(prevBy.get(k) || []).total })).sort((a, b) => b.total - a.total);
     const hasCom = rows.some((r) => r.commission);
     const cols = [
@@ -603,15 +898,9 @@
     );
     table($('#a-mp'), cols, rows, { foot: rows.length > 1 ? { k: 'Toplam', count: n0(s.count), total: tl(s.total), avg: tl(s.avg), commission: tl(s.commission), prev: tl(p.total), d: delta(s.total, p.total) } : null });
 
-    // Durumlar
-    const bySg = groupBy(list, (o) => o.sg);
-    const sRows = Object.keys(STATUS).filter((k) => bySg.has(k)).map((k) => ({ k, count: bySg.get(k).length, total: sum(bySg.get(k), (o) => o.total), raws: [...new Set(bySg.get(k).map((o) => o.status))].join(', ') }));
-    table($('#a-status'), [
-      { key: 'k', label: 'Durum', render: (r) => `<span class="pill ${r.k}">${STATUS[r.k]}</span>`, title: (r) => `Entegra durumları: ${r.raws}` },
-      { key: 'count', label: 'Sipariş', num: true, render: (r) => n0(r.count) },
-      { key: 'p', label: 'Oran', num: true, render: (r) => pct(r.count / list.length) },
-      { key: 'total', label: 'Tutar', num: true, render: (r) => tl(r.total) },
-    ], sRows);
+    // Sipariş listesi (ürün satırı bazında, pazaryeri filtreli)
+    if (S.a.list.month !== m) { S.a.list.month = m; S.a.list.page = 0; }
+    renderMonthList(list);
 
     // Ürünler
     table($('#a-products'), [
@@ -619,16 +908,16 @@
       { key: 'qty', label: 'Adet', num: true, render: (r) => n0(r.qty) },
       { key: 'total', label: 'Ciro', num: true, render: (r) => tl(r.total) },
       { key: 'mp', label: 'En çok', render: (r) => { const top = [...r.mps.entries()].sort((a, b) => b[1] - a[1])[0]; return top ? mpCell(top[0]) : ''; } },
-    ], productRows(list.filter(valid), 15));
+    ], productRows(list, saleItems, 15));
 
     // Gün gün
-    const okList = list.filter(valid);
+    const days = Array.from({ length: dim }, (_, i) => `${m}-${String(i + 1).padStart(2, '0')}`);
     const groups = chartGroups(S.mpOrder.filter((k) => byMp.has(k)));
-    const byDay = groupBy(okList, (o) => o.date);
+    const byDay = groupBy(list, (o) => o.date);
     const dayRows = days.filter((d) => d <= today).reverse().map((d) => {
       const l = byDay.get(d) || [];
-      const r = { d, total: sum(l, (o) => o.total), count: l.length };
-      for (const g of groups) r[g.key] = sum(l.filter((o) => g.members.includes(o.mp)), (o) => o.total);
+      const r = { d, total: sum(l, amt), count: l.length };
+      for (const g of groups) r[g.key] = sum(l.filter((o) => g.members.includes(o.mp)), amt);
       return r;
     });
     const foot = { d: 'Toplam', count: n0(s.count), total: tl(s.total) };
@@ -642,97 +931,410 @@
 
     // 12 ay
     const months = Array.from({ length: 12 }, (_, i) => addMonths(m, i - 11));
-    const yList = ordersBetween(`${months[0]}-01`, end).filter(valid);
+    const yList = sales(ordersBetween(`${months[0]}-01`, end));
     const yg = seriesBy(yList, months, (o) => o.date.slice(0, 7), 'total');
     legend($('#a-year-legend'), yg);
     stackedBar('a-year', months.map((x) => `${MONTHS[+x.slice(5, 7) - 1].slice(0, 3)} ${x.slice(2, 4)}`), yg, { tooltipTitle: (i) => trMonth(months[i]) });
   }
 
-  // ---------- DETAYLI ----------
-  function setPreset(p) {
-    const t = todayTR();
-    const last = S.dates[S.dates.length - 1] > t ? S.dates[S.dates.length - 1] : t;
-    S.d.preset = p;
-    if (p === 'custom') return;
-    let start; let end = t;
-    if (/^\d+$/.test(p)) start = addDays(t, -(+p - 1));
-    else if (p === 'thisMonth') start = `${t.slice(0, 7)}-01`;
-    else if (p === 'lastMonth') { const lm = addMonths(t.slice(0, 7), -1); start = `${lm}-01`; end = `${lm}-${String(daysInMonth(lm)).padStart(2, '0')}`; }
-    else if (p === 'thisYear') start = `${t.slice(0, 4)}-01-01`;
-    else { start = S.dates[0]; end = last; }
-    S.d.start = start; S.d.end = end;
+  // Aylık sipariş listesi: her ürün satırı ayrı satır (iade/iptal hariç, kısmi iadede dönen ürünler hariç)
+  function monthListRows(list) {
+    const L = S.a.list;
+    const q = lc(L.q);
+    const rows = [];
+    for (const o of list) {
+      if (!L.mps.has(o.mp)) continue;
+      const its = o.items?.length ? saleItems(o) : [{ sku: '', name: '—', qty: o.qty, total: amt(o) }];
+      for (const it of its) {
+        const r = { o, it, i: it.i, date: o.date + o.time, no: o.no || o.id, mp: mpLabel(o.mp), customer: o.customer || '', name: it.name, sku: it.sku, qty: it.qty, total: it.total, price: it.qty ? it.total / it.qty : (it.orig && it.orig.qty ? it.orig.total / it.orig.qty : it.total) };
+        if (q && ![r.no, r.customer, r.name, r.sku].some((x) => lc(x).includes(q))) continue;
+        rows.push(r);
+      }
+    }
+    const sk = L.sort;
+    rows.sort((a, b) => {
+      const va = a[sk.k]; const vb = b[sk.k];
+      const c = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb), 'tr');
+      return c * sk.dir || a.no.localeCompare(b.no);
+    });
+    return rows;
   }
 
+  function renderMonthList(list) {
+    const L = S.a.list;
+    mpChips($('#a-list-mps'), L.mps, () => { L.page = 0; renderMonthList(L.src); });
+    L.src = list;
+    const rows = monthListRows(list);
+    const orderCount = new Set(rows.map((r) => r.o.id)).size;
+    const noCustomer = rows.length && rows.every((r) => !r.customer);
+    const editedCount = rows.filter((r) => r.it?.orig).length;
+    $('#a-list-sub').textContent = `${n0(orderCount)} sipariş · ${n0(rows.length)} ürün satırı · iade ve iptaller hariç${editedCount ? ` · ${n0(editedCount)} satır düzeltildi` : ''}${noCustomer ? ' · müşteri adları bir sonraki sipariş çekiminden sonra görünür' : ''}`;
+
+    // Düzenleme modu düğmeleri
+    const np = pendingCount();
+    const gh = ghCfg();
+    $('#a-edit-toggle').hidden = L.edit;
+    $('#a-edit-save').hidden = !L.edit; $('#a-edit-cancel').hidden = !L.edit; $('#a-gh-open').hidden = !L.edit;
+    $('#a-edit-save').textContent = np ? `Kaydet (${np})` : 'Kaydet';
+    $('#a-edit-save').disabled = !np;
+    $('#a-edit-bar').hidden = !L.edit;
+    $('#a-edit-bar-text').innerHTML = L.edit
+      ? `<b>Düzenleme açık.</b> Adet ya da birim fiyatı değiştirip Enter'a basın. Tutar düşerse fark <b>kısmi iade</b> sayılır. ${np ? `<b>${np}</b> kaydedilmemiş değişiklik var.` : ''} ${gh ? `Kayıt: GitHub (${esc(gh.owner)}/${esc(gh.repo)})` : 'Kayıt: dosya indirilir (GitHub bağlantısı için ⚙)'}`
+      : '';
+    if (!L.edit) { $('#a-gh').hidden = true; $('#a-edit-confirm').hidden = true; }
+
+    const pg = paged(rows, L);
+    const editable = (r) => L.edit && Number.isInteger(r.i);
+    const mark = (r) => (r.it?.orig ? `<span class="edit-badge${r.o.edited?.pending && S.edits.pending[r.o.id]?.lines?.[r.i] !== undefined ? ' pending' : ''}" title="Orijinal: ${n0(r.it.orig.qty)} adet · ${tl2(r.it.orig.total)}">${S.edits.pending[r.o.id]?.lines?.[r.i] !== undefined ? 'kaydedilmedi' : 'düzeltildi'}</span>` : '');
+    table($('#a-list'), [
+      { key: 'date', label: 'Tarih', sort: true, render: (r) => trDate(r.o.date) },
+      { key: 'no', label: 'Sipariş no', sort: true, render: (r) => esc(r.no) },
+      { key: 'mp', label: 'Pazaryeri', sort: true, render: (r) => mpCell(r.o.mp) },
+      { key: 'customer', label: 'Müşteri', sort: true, cls: 'cust', render: (r) => esc(r.customer || '—'), title: (r) => r.customer },
+      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', render: (r) => `${esc(r.name)} ${mark(r)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'qty', label: 'Adet', num: true, sort: true, render: (r) => (editable(r) ? `<input class="cell-in" type="number" inputmode="numeric" min="0" step="1" data-f="qty" value="${r.qty}" aria-label="Adet">` : `${n0(r.qty)}${r.it?.orig && r.it.orig.qty !== r.qty ? ` <s class="orig">${n0(r.it.orig.qty)}</s>` : ''}`) },
+      { key: 'price', label: 'Satış fiyatı', num: true, sort: true, render: (r) => (editable(r) ? `<input class="cell-in wide" type="number" inputmode="decimal" min="0" step="0.01" data-f="unit" value="${r2e(r.price)}" aria-label="Birim satış fiyatı">` : tl2(r.price)) },
+      { key: 'total', label: 'Tutar', num: true, sort: true, render: (r) => `${tl2(r.total)}${r.it?.orig && Math.abs(r.it.orig.total - r.total) > 0.009 ? `<br><s class="orig">${tl2(r.it.orig.total)}</s>` : ''}` },
+      ...(L.edit ? [{ key: 'x', label: '', render: (r) => (r.it?.orig ? '<button class="icon-btn sm" data-reset title="Orijinal değere dön" aria-label="Orijinal değere dön"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a6 6 0 1 0 2-4.5"/><path d="M4 3.5V7h3.5"/></svg></button>' : '') }] : []),
+    ], pg.rows, {
+      empty: 'Bu ay seçili pazaryerlerinde sipariş yok.',
+      rowAttr: (r) => `class="${L.edit ? 'editing' : 'clickable'}${r.it?.orig ? ' edited' : ''}" data-oid="${esc(r.o.id)}"${Number.isInteger(r.i) ? ` data-i="${r.i}"` : ''}`,
+      sort: L.sort,
+      onSort: () => { L.page = 0; renderMonthList(L.src); },
+      foot: rows.length ? { date: 'Toplam', qty: n0(sum(rows, (r) => r.qty)), total: tl2(sum(rows, (r) => r.total)) } : null,
+    });
+    pager($('#a-list-pager'), rows.length, L, pg, () => renderMonthList(L.src), $('#a-list'), 'satır');
+  }
+
+  // ---------- DÜZELTMELER (adet / fiyat) ----------
+  // Elle yapılan düzeltmeler data/duzeltmeler.json'da şifreli durur ve her açılışta Entegra verisinin üzerine uygulanır.
+  // Otomatik çekimler bu dosyaya dokunmaz. Bir satırın tutarı düşürülürse fark kısmi iade sayılır.
+  const EDIT_FILE = 'docs/data/duzeltmeler.json';
+  const r2e = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+  function loadDraft() {
+    try { S.edits.pending = JSON.parse(store.get('duzeltme-taslak') || '{}') || {}; } catch { S.edits.pending = {}; }
+  }
+  function saveDraft() {
+    const n = Object.keys(S.edits.pending).length;
+    if (n) store.set('duzeltme-taslak', JSON.stringify(S.edits.pending)); else store.del('duzeltme-taslak');
+  }
+  const pendingCount = () => Object.values(S.edits.pending).reduce((a, o) => a + Object.keys(o.lines || {}).length, 0);
+
+  async function readEditBody(f, pass) {
+    const body = f && f.alg ? await decrypt(f, pass) : f;
+    return body && body.orders ? body : { v: 1, orders: {}, savedAt: '' };
+  }
+
+  async function loadEdits(pass) {
+    S.edits.saved = { v: 1, orders: {}, savedAt: '' };
+    S.edits.state = 'none';
+    loadDraft();
+    // GitHub bağlantısı varsa en güncel hali doğrudan oradan okunur (site yayını 1-2 dakika gecikebilir)
+    const gh = ghCfg();
+    if (gh) {
+      try {
+        const r = await ghGet(gh);
+        if (r) { S.edits.saved = await readEditBody(r.json, pass); S.edits.state = 'ok'; }
+        else S.edits.state = 'ok';
+        return;
+      } catch { /* sitedeki dosyaya geç */ }
+    }
+    let f = null;
+    try { f = await getJson('data/duzeltmeler.json'); } catch { f = null; }
+    if (f) {
+      try { S.edits.saved = await readEditBody(f, pass); S.edits.state = 'ok'; } catch { S.edits.state = 'unreadable'; }
+    }
+    // Bu tarayıcıdan az önce kaydedilmiş, henüz yayına çıkmamış hal daha yeniyse onu kullan
+    try {
+      const local = JSON.parse(store.get('duzeltme-son') || 'null');
+      if (local && local.savedAt && local.savedAt > (S.edits.saved.savedAt || '')) S.edits.saved = local;
+    } catch { /* yok say */ }
+  }
+
+  // Kayıtlı + taslak düzeltmeleri birleştirir (taslakta null = düzeltmeyi kaldır)
+  function mergeEdits(base, pending, meta) {
+    const out = JSON.parse(JSON.stringify(base || {}));
+    for (const [oid, p] of Object.entries(pending || {})) {
+      const cur = out[oid] || { lines: {} };
+      for (const [i, v] of Object.entries(p.lines || {})) { if (v === null) delete cur.lines[i]; else cur.lines[i] = v; }
+      if (Object.keys(cur.lines).length) out[oid] = { ...cur, ...(meta || {}) }; else delete out[oid];
+    }
+    return out;
+  }
+  const effectiveEdits = () => mergeEdits(S.edits.saved.orders, S.edits.pending);
+
+  // Düzeltmeleri siparişlere uygular (orijinal veri değişmez, kopyası üzerinde çalışılır)
+  function applyEdits(raw) {
+    const orders = typeof structuredClone === 'function' ? structuredClone(raw) : JSON.parse(JSON.stringify(raw));
+    const eff = effectiveEdits();
+    const savedIds = S.edits.saved.orders || {};
+    for (const o of orders) {
+      (o.items || []).forEach((it, i) => { it.i = i; });
+      const e = eff[o.id];
+      if (!e || !o.items?.length || isLost(o)) continue;
+      for (const [k, v] of Object.entries(e.lines)) {
+        let it = o.items[+k];
+        if (!it || (v.sku && it.sku && it.sku !== v.sku)) it = o.items.find((x) => v.sku && x.sku === v.sku);
+        if (!it) continue;
+        it.orig = { qty: it.qty, total: it.total, r: it.r };
+        it.qty = Math.max(0, Math.round(v.qty));
+        it.total = Math.max(0, r2e(v.total));
+        delete it.r;
+      }
+      const edited = o.items.filter((it) => it.orig);
+      // Azaltılan miktar/tutar: iade olarak görünmesi için ayrı satır
+      for (const it of edited) {
+        const dq = Math.max(0, it.orig.qty - it.qty);
+        const dt = r2e(it.orig.total - it.total);
+        if (dt > 0.009) o.items.push({ sku: it.sku, name: it.name, qty: dq, total: dt, r: 'iade', synth: true, i: it.i });
+      }
+      const sale = r2e(sum(o.items.filter((x) => !x.r), (x) => x.total));
+      const ret = r2e(o.total - sale);
+      if (ret > 0.009) {
+        o.sg = 'kismi'; o.ret = ret;
+        o.retQty = sum(o.items.filter((x) => x.r), (x) => x.qty);
+      } else {
+        if (o.sg === 'kismi') o.sg = 'teslim';
+        o.ret = 0; o.retQty = 0;
+        if (sale > o.total) o.total = sale;
+      }
+      o.edited = { by: e.by || '', at: e.at || '', pending: Boolean(S.edits.pending[o.id]), saved: Boolean(savedIds[o.id]) };
+      o.status = `${o.status || STATUS[o.sg]} · düzeltildi`;
+    }
+    return orders;
+  }
+
+  function reingest() {
+    ingest(applyEdits(S.rawOrders));
+    render();
+  }
+
+  // Bir satırı düzelt: değer orijinaline eşitse düzeltme kaldırılır
+  function setLineEdit(oid, i, qty, unit) {
+    const raw = S.rawById.get(String(oid));
+    const it = raw?.items?.[i];
+    if (!it) return;
+    const q = Math.max(0, Math.round(Number(qty)));
+    const total = r2e(q * Math.max(0, Number(unit)));
+    const p = S.edits.pending[oid] || { lines: {} };
+    const sameAsOrig = q === it.qty && Math.abs(total - it.total) < 0.01;
+    if (sameAsOrig) {
+      if (S.edits.saved.orders?.[oid]?.lines?.[i]) p.lines[i] = null; else delete p.lines[i];
+    } else p.lines[i] = { sku: it.sku || '', qty: q, total };
+    if (Object.keys(p.lines).length) S.edits.pending[oid] = p; else delete S.edits.pending[oid];
+    saveDraft();
+    reingest();
+  }
+  function resetLine(oid, i) {
+    const raw = S.rawById.get(String(oid));
+    const it = raw?.items?.[i];
+    if (it) setLineEdit(oid, i, it.qty, it.qty ? it.total / it.qty : it.total);
+  }
+
+  // ---------- GitHub'a kaydetme ----------
+  function ghCfg() {
+    try { const c = JSON.parse(store.get('gh-ayar') || 'null'); return c && c.token && c.owner && c.repo ? c : null; } catch { return null; }
+  }
+  function ghGuess() {
+    const h = location.hostname;
+    if (!h.endsWith('.github.io')) return { owner: '', repo: '' };
+    const owner = h.split('.')[0];
+    const repo = location.pathname.split('/').filter(Boolean)[0] || `${owner}.github.io`;
+    return { owner, repo };
+  }
+  const ghHeaders = (c) => ({ Authorization: `Bearer ${c.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' });
+  function ghError(res, what) {
+    if (res.status === 401) return new Error('GitHub anahtarı geçersiz ya da süresi dolmuş. Yeni bir anahtar oluşturup bağlantı ayarına girin.');
+    if (res.status === 403) return new Error('GitHub anahtarının bu depoya yazma izni yok. Anahtarı oluştururken "Contents: Read and write" iznini verin.');
+    if (res.status === 404) return new Error('Depo bulunamadı ya da anahtarın bu depoya erişimi yok. Depo adını ve anahtarın depo seçimini kontrol edin.');
+    return new Error(`GitHub ${what} başarısız (HTTP ${res.status}).`);
+  }
+  async function ghGet(c) {
+    const res = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}/contents/${EDIT_FILE}?t=${Date.now()}`, { headers: ghHeaders(c), cache: 'no-store' });
+    if (res.status === 404) {
+      // Dosya yok mu, depo mu yok? Depoya erişimi kontrol et
+      const repo = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}`, { headers: ghHeaders(c), cache: 'no-store' });
+      if (!repo.ok) throw ghError(repo, 'okuma');
+      return null;
+    }
+    if (!res.ok) throw ghError(res, 'okuma');
+    const j = await res.json();
+    const text = new TextDecoder().decode(Uint8Array.from(atob(String(j.content).replace(/\s/g, '')), (ch) => ch.charCodeAt(0)));
+    return { sha: j.sha, json: JSON.parse(text) };
+  }
+  async function ghPut(c, envelope, sha, message) {
+    const content = b64(new TextEncoder().encode(JSON.stringify(envelope)));
+    return fetch(`https://api.github.com/repos/${c.owner}/${c.repo}/contents/${EDIT_FILE}`, {
+      method: 'PUT', headers: { ...ghHeaders(c), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, content, ...(sha ? { sha } : {}) }),
+    });
+  }
+  async function ghTest(c) {
+    const res = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}`, { headers: ghHeaders(c), cache: 'no-store' });
+    if (!res.ok) throw ghError(res, 'bağlantısı');
+    const j = await res.json();
+    if (j.permissions && !j.permissions.push) throw new Error('Anahtar depoyu görebiliyor ama yazamıyor. "Contents: Read and write" iznini verin.');
+    return j.full_name || `${c.owner}/${c.repo}`;
+  }
+
+  async function encryptEdits(body) {
+    return S.manifest.encrypted ? encryptJson(body, S.password) : body;
+  }
+
+  async function saveEdits() {
+    const n = pendingCount();
+    if (!n) { toast('Kaydedilecek değişiklik yok.'); return; }
+    const meta = { by: S.userName || '', at: new Date().toISOString() };
+    const btn = $('#a-edit-save');
+    btn.disabled = true; btn.textContent = 'Kaydediliyor…';
+    try {
+      const gh = ghCfg();
+      if (gh) {
+        let done = false;
+        for (let attempt = 0; attempt < 3 && !done; attempt++) {
+          // Her denemede GitHub'daki en güncel hal okunur; başkasının düzeltmeleri korunur
+          const cur = await ghGet(gh);
+          // GitHub'da dosya yoksa eldeki (sitedeki dosyadan okunan) düzeltmeler temel alınır
+          const remote = cur ? await readEditBody(cur.json, S.password) : { v: 1, orders: S.edits.saved.orders || {} };
+          const body = { v: 1, savedAt: meta.at, orders: mergeEdits(remote.orders, S.edits.pending, meta) };
+          const res = await ghPut(gh, await encryptEdits(body), cur?.sha, `Sipariş düzeltmesi: ${n} satır${S.userName ? ` (${S.userName})` : ''}`);
+          if (res.ok) { S.edits.saved = body; done = true; }
+          else if (res.status !== 409 && res.status !== 422) throw ghError(res, 'kaydetme');
+        }
+        if (!done) throw new Error('Kayıt sırasında başka bir değişiklikle çakıştı. Tekrar deneyin.');
+        toast(`${n} düzeltme GitHub'a kaydedildi. Site 1–2 dakika içinde herkes için güncellenir.`);
+      } else {
+        const body = { v: 1, savedAt: meta.at, orders: mergeEdits(S.edits.saved.orders, S.edits.pending, meta) };
+        downloadJson(await encryptEdits(body), 'duzeltmeler.json');
+        S.edits.saved = body;
+        toast('duzeltmeler.json indirildi. GitHub\'da docs/data klasörüne yükleyin.', 9000);
+      }
+      try { store.set('duzeltme-son', JSON.stringify(S.edits.saved)); } catch { /* yok say */ }
+      S.edits.pending = {}; saveDraft();
+      reingest();
+    } catch (err) {
+      toast(err.message || 'Kaydedilemedi.', 9000, true);
+    } finally {
+      btn.disabled = false; btn.textContent = 'Kaydet';
+    }
+  }
+
+  function downloadJson(obj, name) {
+    const blob = new Blob([JSON.stringify(obj)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  let toastTimer;
+  function toast(msg, ms = 5000, isErr = false) {
+    const t = $('#toast');
+    t.textContent = msg; t.classList.toggle('err', isErr); t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+  }
+
+  function bindEdits() {
+    const L = S.a.list;
+    $('#a-edit-toggle').onclick = () => { L.edit = !L.edit; renderMonthList(L.src); };
+    $('#a-edit-save').onclick = saveEdits;
+    $('#a-edit-cancel').onclick = () => {
+      if (!pendingCount()) { L.edit = false; renderMonthList(L.src); return; }
+      $('#a-edit-confirm').hidden = false;
+    };
+    $('#a-edit-discard').onclick = () => { S.edits.pending = {}; saveDraft(); $('#a-edit-confirm').hidden = true; reingest(); };
+    $('#a-edit-keep').onclick = () => { $('#a-edit-confirm').hidden = true; };
+    $('#a-gh-open').onclick = () => { const p = $('#a-gh'); p.hidden = !p.hidden; if (!p.hidden) fillGh(); };
+    $('#a-gh-save').onclick = async () => {
+      const c = { token: $('#a-gh-token').value.trim() || ghCfg()?.token || '', owner: $('#a-gh-owner').value.trim(), repo: $('#a-gh-repo').value.trim() };
+      const msg = $('#a-gh-msg');
+      if (!c.token || !c.owner || !c.repo) { msg.className = 'k-err'; msg.textContent = 'Anahtar, kullanıcı adı ve depo adı gerekli.'; return; }
+      msg.className = 'sub'; msg.textContent = 'Kontrol ediliyor…';
+      try {
+        const name = await ghTest(c);
+        store.set('gh-ayar', JSON.stringify(c));
+        msg.className = 'sub ok'; msg.textContent = `Bağlandı: ${name}. Düzeltmeler artık doğrudan GitHub'a kaydedilecek.`;
+        $('#a-gh-token').value = '';
+        renderMonthList(L.src);
+      } catch (err) { msg.className = 'k-err'; msg.textContent = err.message; }
+    };
+    $('#a-gh-remove').onclick = () => { store.del('gh-ayar'); fillGh(); $('#a-gh-msg').className = 'sub'; $('#a-gh-msg').textContent = 'Bağlantı bu tarayıcıdan kaldırıldı.'; renderMonthList(L.src); };
+    // Satır içi düzenleme
+    $('#a-list').addEventListener('change', (e) => {
+      const inp = e.target.closest('input.cell-in');
+      if (!inp) return;
+      const tr = inp.closest('tr');
+      const q = tr.querySelector('input[data-f="qty"]').value;
+      const u = tr.querySelector('input[data-f="unit"]').value.replace(',', '.');
+      setLineEdit(tr.dataset.oid, +tr.dataset.i, q, u);
+    });
+    $('#a-list').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-reset]');
+      if (b) { const tr = b.closest('tr'); resetLine(tr.dataset.oid, +tr.dataset.i); }
+    });
+    if (pendingCount()) toast(`Kaydedilmemiş ${pendingCount()} düzeltmeniz var. Aylık ekranda "Kaydet" ile kaydedin.`, 8000);
+  }
+  function fillGh() {
+    const c = ghCfg(); const g = ghGuess();
+    $('#a-gh-owner').value = c?.owner || g.owner;
+    $('#a-gh-repo').value = c?.repo || g.repo;
+    $('#a-gh-token').placeholder = c ? 'Kayıtlı (değiştirmek için yenisini yapıştırın)' : 'github_pat_…';
+    $('#a-gh-remove').hidden = !c;
+    $('#a-gh-state').textContent = c ? `Bağlı: ${c.owner}/${c.repo}` : 'Bağlı değil: düzeltmeler dosya olarak indirilir.';
+  }
+
+  // ---------- DETAYLI ----------
   function bindDetail() {
     const d = S.d;
-    $('#d-preset').onchange = (e) => { setPreset(e.target.value); d.page = 0; renderDetail(); };
-    const onDate = () => { d.start = $('#d-start').value || d.start; d.end = $('#d-end').value || d.end; d.preset = 'custom'; $('#d-preset').value = 'custom'; d.page = 0; renderDetail(); };
+    $('#d-preset').onchange = (e) => { applyPreset(d, e.target.value); d.page = 0; renderDetail(); };
+    const onDate = () => {
+      let a = $('#d-start').value || d.start; let b = $('#d-end').value || d.end;
+      if (a > b) [a, b] = [b, a];
+      d.start = a; d.end = b; d.preset = 'custom'; d.page = 0; renderDetail();
+    };
     $('#d-start').onchange = onDate; $('#d-end').onchange = onDate;
     $('#d-status').onchange = (e) => { d.status = e.target.value; d.page = 0; renderDetail(); };
-    $('#d-excl').checked = d.excl;
-    $('#d-excl').onchange = (e) => { d.excl = e.target.checked; renderDetail(); };
     $('#d-gran').onchange = (e) => { d.gran = e.target.value; renderDetail(); };
     $('#d-metric').onchange = (e) => { d.metric = e.target.value; renderDetail(); };
     let tmr;
     $('#d-q').oninput = (e) => { clearTimeout(tmr); tmr = setTimeout(() => { d.q = e.target.value.trim(); d.page = 0; renderDetail(); }, 200); };
     $('#d-csv').onclick = () => exportOrders(detailList(), `siparisler-${d.start}_${d.end}`);
-    $('#d-csv-products').onclick = () => exportProducts(detailList().filter((o) => !d.excl || valid(o)), `urunler-${d.start}_${d.end}`);
+    $('#d-csv-products').onclick = () => exportProducts(detailList(), `urunler-${d.start}_${d.end}`);
   }
 
-  function renderMpChips() {
-    const el = $('#d-mps');
-    const all = S.d.mps.size === S.mpOrder.length;
-    el.innerHTML = `<button class="chip" data-all aria-pressed="${all}">Tümü</button>` +
-      S.mpOrder.map((k) => `<button class="chip" data-k="${esc(k)}" aria-pressed="${S.d.mps.has(k)}">${sw(k)}${esc(mpLabel(k))}</button>`).join('');
-    $$('.chip', el).forEach((c) => c.addEventListener('click', () => {
-      if (c.hasAttribute('data-all')) S.d.mps = all ? new Set() : new Set(S.mpOrder);
-      else if (S.d.mps.has(c.dataset.k)) S.d.mps.delete(c.dataset.k); else S.d.mps.add(c.dataset.k);
-      S.d.page = 0;
-      renderDetail();
-    }));
-  }
+  const matchQ = (o, q) => !q || [o.no, o.id, o.mpLabel].some((x) => lc(x).includes(q)) ||
+    (o.items || []).some((i) => lc(i.name).includes(q) || lc(i.sku).includes(q));
 
-  const lc = (s) => String(s || '').toLocaleLowerCase('tr-TR');
+  // Detaylı rapordaki satış listesi (iade/iptal hariç)
   function detailList(start = S.d.start, end = S.d.end) {
     const d = S.d;
     const q = lc(d.q);
-    return ordersBetween(start, end).filter((o) => {
-      if (!d.mps.has(o.mp)) return false;
-      if (d.status && o.sg !== d.status) return false;
-      if (!q) return true;
-      return [o.no, o.id, o.city, o.carrier, o.status, o.mpLabel].some((x) => lc(x).includes(q)) ||
-        (o.items || []).some((i) => lc(i.name).includes(q) || lc(i.sku).includes(q));
-    });
+    return ordersBetween(start, end).filter((o) => isSale(o) && d.mps.has(o.mp) && (!d.status || o.sg === d.status) && matchQ(o, q));
   }
 
   function renderDetail() {
     const d = S.d;
     $('#d-preset').value = d.preset;
     $('#d-start').value = d.start; $('#d-end').value = d.end;
-    renderMpChips();
+    mpChips($('#d-mps'), d.mps, () => { d.page = 0; renderDetail(); });
     const list = detailList();
-    const base = d.excl ? list.filter(valid) : list;
     const s = stats(list);
-    const total = sum(base, (o) => o.total);
-    const count = base.length;
-    const qty = sum(base, (o) => o.qty);
-    const ndays = Math.round((D(d.end) - D(d.start)) / 864e5) + 1;
-    $('#d-sub').textContent = `${trDate(d.start)} – ${trDate(d.end)} · ${ndays} gün`;
+    const ndays = dayCount(d.start, d.end);
+    $('#d-sub').textContent = `${trDate(d.start)} – ${trDate(d.end)} · ${ndays} gün · iade ve iptaller hariç`;
 
     // Önceki eşit dönem
     const pEnd = addDays(d.start, -1); const pStart = addDays(pEnd, -(ndays - 1));
-    const prevBase = detailList(pStart, pEnd).filter((o) => !d.excl || valid(o));
-    const pTotal = sum(prevBase, (o) => o.total);
+    const p = stats(detailList(pStart, pEnd));
     const cmp = pStart < S.dates[0] ? `önceki ${ndays} güne göre (önceki dönemin verisi eksik)` : `önceki ${ndays} güne göre`;
-    const com = sum(base, (o) => o.commission); const cargo = sum(base, (o) => o.cargoPrice);
+    const dq = lc(d.q);
+    const ds = (fn) => daySeries(d.start, d.end > todayTR() ? todayTR() : d.end, fn, (o) => isSale(o) && d.mps.has(o.mp) && (!d.status || o.sg === d.status) && matchQ(o, dq));
     const kp = [
-      { k: 'Ciro', v: tl(total), d: `${delta(total, pTotal)} ${cmp}` },
-      { k: 'Sipariş', v: n0(count), d: `${delta(count, prevBase.length)} ${cmp}` },
-      { k: 'Satılan ürün', v: n0(qty), d: `${n0(qty / ndays)} / gün` },
-      { k: 'Ortalama sepet', v: tl(count ? total / count : 0), d: `günlük ort. ciro ${tl(total / ndays)}` },
+      { k: 'Ciro', v: tl(s.total), d: `${delta(s.total, p.total)} ${cmp}`, spark: ds((l) => stats(l).total) },
+      { k: 'Sipariş', v: n0(s.count), d: `${delta(s.count, p.count)} ${cmp}`, spark: ds((l) => stats(l).count) },
+      { k: 'Satılan ürün', v: n0(s.qty), d: `${delta(s.qty, p.qty) || ''} ${n0(s.qty / ndays)} / gün`, spark: ds((l) => stats(l).qty) },
+      { k: 'Ortalama sepet', v: tl(s.avg), d: `${delta(s.avg, p.avg) || ''} günlük ort. ciro ${tl(s.total / ndays)}`, spark: ds((l) => stats(l).avg) },
     ];
-    if (com || cargo) kp.push({ k: 'Komisyon + kargo', v: tl(com + cargo), d: `net ${tl(total - com - cargo)}` });
-    kp.push({ k: 'İptal / İade', v: `${n0(s.cancel)} / ${n0(s.refund)}`, d: `${tl(s.lostTotal)} · oran ${pct(list.length ? s.lostCount / list.length : 0)}` });
     $('#d-kpis').innerHTML = kpiHtml(kp);
 
     // Trend
@@ -752,48 +1354,33 @@
     const mName = { total: 'Ciro', count: 'Sipariş', qty: 'Ürün adedi' }[d.metric];
     $('#d-trend-title').textContent = `${mName} trendi`;
     $('#d-trend-sub').textContent = `${{ day: 'Günlük', week: 'Haftalık', month: 'Aylık' }[gran]}, pazaryerine göre`;
-    const tg = seriesBy(base, buckets, bucketOf, d.metric, S.mpOrder.filter((k) => d.mps.has(k)));
+    const tg = seriesBy(list, buckets, bucketOf, d.metric, S.mpOrder.filter((k) => d.mps.has(k)));
     legend($('#d-trend-legend'), tg);
     stackedBar('d-trend', buckets.map(label), tg, { money: d.metric === 'total', tooltipTitle: (i) => title(buckets[i]) });
 
-    // Pazaryeri karşılaştırma
+    // Pazaryeri karşılaştırma (komisyon ve kargo sütunları yok)
     const byMp = groupBy(list, (o) => o.mp);
-    const rows = [...byMp.entries()].map(([k, l]) => {
-      const b = d.excl ? l.filter(valid) : l;
-      const st = stats(l);
-      const t = sum(b, (o) => o.total);
-      const c = sum(b, (o) => o.commission); const cg = sum(b, (o) => o.cargoPrice);
-      return { k, count: b.length, qty: sum(b, (o) => o.qty), total: t, avg: b.length ? t / b.length : 0, com: c, cargo: cg, net: t - c - cg, cancel: st.cancel, refund: st.refund, rate: l.length ? st.lostCount / l.length : 0 };
-    }).sort((a, b) => b.total - a.total);
-    const showCost = rows.some((r) => r.com || r.cargo);
-    const mcols = [
+    const rows = [...byMp.entries()].map(([k, l]) => ({ k, ...stats(l) })).sort((a, b) => b.total - a.total);
+    table($('#d-mp'), [
       { key: 'k', label: 'Pazaryeri', render: (r) => mpCell(r.k) },
       { key: 'count', label: 'Sipariş', num: true, render: (r) => n0(r.count) },
       { key: 'qty', label: 'Ürün', num: true, render: (r) => n0(r.qty) },
       { key: 'total', label: 'Ciro', num: true, render: (r) => tl(r.total) },
-      { key: 'share', label: 'Pay', num: true, render: (r) => shareBar(r.total, total, mpColor(r.k)) },
+      { key: 'share', label: 'Pay', num: true, render: (r) => shareBar(r.total, s.total, mpColor(r.k)) },
       { key: 'avg', label: 'Ort. sepet', num: true, render: (r) => tl(r.avg) },
-    ];
-    if (showCost) mcols.push(
-      { key: 'com', label: 'Komisyon', num: true, render: (r) => tl(r.com) },
-      { key: 'cargo', label: 'Kargo', num: true, render: (r) => tl(r.cargo) },
-      { key: 'net', label: 'Net', num: true, render: (r) => `<b>${tl(r.net)}</b>` },
-    );
-    mcols.push(
-      { key: 'cancel', label: 'İptal', num: true, render: (r) => n0(r.cancel) },
-      { key: 'refund', label: 'İade', num: true, render: (r) => n0(r.refund) },
-      { key: 'rate', label: 'İptal+İade %', num: true, render: (r) => pct(r.rate) },
-    );
-    table($('#d-mp'), mcols, rows, { foot: rows.length > 1 ? { k: 'Toplam', count: n0(count), qty: n0(qty), total: tl(total), avg: tl(count ? total / count : 0), com: tl(com), cargo: tl(cargo), net: tl(total - com - cargo), cancel: n0(s.cancel), refund: n0(s.refund), rate: pct(list.length ? s.lostCount / list.length : 0) } : null });
+    ], rows, { foot: rows.length > 1 ? { k: 'Toplam', count: n0(s.count), qty: n0(s.qty), total: tl(s.total), avg: tl(s.avg) } : null });
+
+    donut($('#d-donut'), list);
+    heatmap($('#d-heat'), list, d.start, d.end > todayTR() ? todayTR() : d.end);
 
     // Ürünler
-    const prods = productRows(base);
+    const prods = productRows(list);
     const ps = d.psort;
     prods.sort((a, b) => {
       const va = a[ps.k]; const vb = b[ps.k];
       return (typeof va === 'string' ? va.localeCompare(vb, 'tr') : va - vb) * ps.dir;
     });
-    const maxT = Math.max(0, ...prods.map((p) => p.total));
+    const maxT = Math.max(0, ...prods.map((x) => x.total));
     table($('#d-products'), [
       { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
       { key: 'qty', label: 'Adet', num: true, sort: true, render: (r) => n0(r.qty) },
@@ -804,8 +1391,8 @@
     ], prods.slice(0, 300), { sort: ps, onSort: renderDetail, empty: 'Bu filtrelerle ürün yok.' });
 
     // Şehirler
-    const byCity = groupBy(base.filter((o) => o.city), (o) => o.city);
-    const cityRows = [...byCity.entries()].map(([c, l]) => ({ c, count: l.length, total: sum(l, (o) => o.total) })).sort((a, b) => b.total - a.total).slice(0, 12);
+    const byCity = groupBy(list.filter((o) => o.city), (o) => o.city);
+    const cityRows = [...byCity.entries()].map(([c, l]) => ({ c, count: l.length, total: sum(l, amt) })).sort((a, b) => b.total - a.total).slice(0, 12);
     table($('#d-cities'), [
       { key: 'c', label: 'Şehir', render: (r) => esc(r.c) },
       { key: 'count', label: 'Sipariş', num: true, render: (r) => n0(r.count) },
@@ -815,7 +1402,7 @@
     // Hafta günleri
     const wd = Array.from({ length: 7 }, () => ({ total: 0, count: 0, days: 0 }));
     for (let x = d.start; x <= d.end; x = addDays(x, 1)) wd[D(x).getUTCDay()].days++;
-    for (const o of base) { const g = D(o.date).getUTCDay(); wd[g].total += o.total; wd[g].count++; }
+    for (const o of list) { const g = D(o.date).getUTCDay(); wd[g].total += amt(o); wd[g].count++; }
     const order = [1, 2, 3, 4, 5, 6, 0];
     const wdMax = Math.max(...order.map((i) => (wd[i].days ? wd[i].total / wd[i].days : 0)));
     table($('#d-weekday'), [
@@ -825,21 +1412,558 @@
     ], order.map((i) => ({ g: DAYS[i], c: wd[i].days ? wd[i].count / wd[i].days : 0, t: wd[i].days ? wd[i].total / wd[i].days : 0 })));
 
     // Siparişler
-    const sk = d.sort;
-    const sorted = [...list].sort((a, b) => {
-      let va; let vb;
-      if (sk.k === 'date') { va = a.date + a.time; vb = b.date + b.time; } else { va = a[sk.k]; vb = b[sk.k]; }
-      if (sk.k === 'mp') { va = mpLabel(a.mp); vb = mpLabel(b.mp); }
-      return (typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb), 'tr')) * sk.dir;
-    });
-    $('#d-orders-sub').textContent = `${n0(list.length)} sipariş · başlığa tıklayarak sıralayın`;
+    const sorted = sortOrders(list, d.sort, ORDER_SORT);
+    $('#d-orders-sub').textContent = `${n0(list.length)} sipariş · iade ve iptaller hariç · başlığa tıklayarak sıralayın`;
     ordersTable($('#d-orders'), $('#d-pager'), sorted, d, renderDetail, true);
   }
 
   function mixBar(mps, total, maxT) {
     const w = maxT ? Math.max(8, (total / maxT) * 140) : 0;
-    const segs = [...mps.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span title="${esc(mpLabel(k))}: ${tl(v)}" style="display:block;height:100%;width:${(v / total) * 100}%;background:${mpColor(k)};border-right:2px solid var(--surface)"></span>`).join('');
+    const segs = [...mps.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span title="${esc(mpLabel(k))}: ${tl(v)}" style="display:block;height:100%;width:${total ? (v / total) * 100 : 0}%;background:${mpColor(k)};border-right:2px solid var(--surface)"></span>`).join('');
     return `<span style="display:flex;width:${w}px;height:8px;border-radius:3px;overflow:hidden">${segs}</span>`;
+  }
+
+  // ---------- İADE & İPTAL ----------
+  function bindReturns() {
+    const r = S.r;
+    $('#r-preset').onchange = (e) => { applyPreset(r, e.target.value); r.page = 0; renderReturns(); };
+    const onDate = () => {
+      let a = $('#r-start').value || r.start; let b = $('#r-end').value || r.end;
+      if (a > b) [a, b] = [b, a];
+      r.start = a; r.end = b; r.preset = 'custom'; r.page = 0; renderReturns();
+    };
+    $('#r-start').onchange = onDate; $('#r-end').onchange = onDate;
+    $('#r-datetype').onchange = (e) => { r.datetype = e.target.value; r.page = 0; renderReturns(); };
+    $$('#r-types .chip').forEach((c) => c.addEventListener('click', () => { r.type = c.dataset.t; r.page = 0; renderReturns(); }));
+    let tmr;
+    $('#r-q').oninput = (e) => { clearTimeout(tmr); tmr = setTimeout(() => { r.q = e.target.value.trim(); r.page = 0; renderReturns(); }, 200); };
+    $('#r-csv').onclick = () => exportReturns(returnsList(), `iade-iptal-${r.start}_${r.end}`);
+  }
+
+  const retDay = (o) => (o.changed || o.date).slice(0, 10);
+
+  function returnsList(withType = true) {
+    const r = S.r;
+    const q = lc(r.q);
+    const byChanged = r.datetype === 'changed';
+    return S.retOrders.filter((o) => {
+      const day = byChanged ? retDay(o) : o.date;
+      if (day < r.start || day > r.end) return false;
+      if (!r.mps.has(o.mp)) return false;
+      if (withType && r.type && o.sg !== r.type) return false;
+      return !q || matchQ(o, q) || lc(o.status).includes(q);
+    });
+  }
+
+  function renderReturns() {
+    const r = S.r;
+    $('#r-preset').value = r.preset;
+    $('#r-start').value = r.start; $('#r-end').value = r.end;
+    $('#r-datetype').value = r.datetype;
+    $$('#r-types .chip').forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.t === r.type)));
+    mpChips($('#r-mps'), r.mps, () => { r.page = 0; renderReturns(); });
+    const byChanged = r.datetype === 'changed';
+    $('#r-sub').textContent = `${trDate(r.start)} – ${trDate(r.end)} · ${byChanged ? 'iade/iptal işleminin yapıldığı tarihe göre' : 'sipariş tarihine göre'}`;
+
+    const allTypes = returnsList(false);
+    const list = r.type ? allTypes.filter((o) => o.sg === r.type) : allTypes;
+    const of = (t) => allTypes.filter((o) => o.sg === t);
+    const iptal = of('iptal'); const iade = of('iade'); const kismi = of('kismi');
+    // Oran için paydada aynı tarih aralığı ve pazaryerlerindeki tüm siparişler (sipariş tarihine göre)
+    const base = ordersBetween(r.start, r.end).filter((o) => r.mps.has(o.mp));
+    const baseRet = base.filter(isRet);
+
+    // Kart eğrileri: seçili aralıkta gün gün adet (seçili tarih türüne göre)
+    const rs = (t) => {
+      const end = r.end > todayTR() ? todayTR() : r.end;
+      let a = r.start; if (dayCount(a, end) > 60) a = addDays(end, -59);
+      const by = groupBy(allTypes.filter((o) => o.sg === t), (o) => (byChanged ? retDay(o) : o.date));
+      const out = []; for (let x = a; x <= end; x = addDays(x, 1)) out.push((by.get(x) || []).length);
+      return out;
+    };
+    $('#r-kpis').innerHTML = kpiHtml([
+      { k: 'İptal', v: n0(iptal.length), d: tl(sum(iptal, retAmt)), spark: rs('iptal') },
+      { k: 'İade', v: n0(iade.length), d: tl(sum(iade, retAmt)), spark: rs('iade') },
+      { k: 'Kısmi iade', v: n0(kismi.length), d: `${tl(sum(kismi, retAmt))} iade edilen`, spark: rs('kismi') },
+      { k: 'Toplam iade/iptal tutarı', v: tl(sum(allTypes, retAmt)), d: `${n0(sum(allTypes, retQty))} ürün` },
+      { k: 'İade/iptal oranı', v: pct(base.length ? baseRet.length / base.length : 0), d: `${n0(baseRet.length)} / ${n0(base.length)} sipariş (sipariş tarihine göre)` },
+    ]);
+
+    // Pazaryeri tablosu
+    const baseBy = groupBy(base, (o) => o.mp);
+    const baseRetBy = groupBy(baseRet, (o) => o.mp);
+    const listBy = groupBy(allTypes, (o) => o.mp);
+    const mpRows = S.mpOrder.filter((k) => listBy.has(k) || baseRetBy.has(k)).map((k) => {
+      const l = listBy.get(k) || [];
+      const all = (baseBy.get(k) || []).length;
+      const rc = (baseRetBy.get(k) || []).length;
+      return { k, iptal: l.filter((o) => o.sg === 'iptal').length, iade: l.filter((o) => o.sg === 'iade').length, kismi: l.filter((o) => o.sg === 'kismi').length, amt: sum(l, retAmt), qty: sum(l, retQty), all, rate: all ? rc / all : 0 };
+    }).sort((a, b) => b.amt - a.amt);
+    $('#r-mp-sub').textContent = 'Oran: aynı tarih aralığında verilen siparişlerin yüzde kaçı iade/iptal oldu';
+    table($('#r-mp'), [
+      { key: 'k', label: 'Pazaryeri', render: (x) => mpCell(x.k) },
+      { key: 'iptal', label: 'İptal', num: true, render: (x) => n0(x.iptal) },
+      { key: 'iade', label: 'İade', num: true, render: (x) => n0(x.iade) },
+      { key: 'kismi', label: 'Kısmi iade', num: true, render: (x) => n0(x.kismi) },
+      { key: 'qty', label: 'Ürün', num: true, render: (x) => n0(x.qty) },
+      { key: 'amt', label: 'Tutar', num: true, render: (x) => `<span class="ret-amt">${tl(x.amt)}</span>` },
+      { key: 'all', label: 'Tüm siparişler', num: true, render: (x) => n0(x.all) },
+      { key: 'rate', label: 'Oran', num: true, render: (x) => pct(x.rate) },
+    ], mpRows, {
+      empty: 'Bu aralıkta iade veya iptal yok.',
+      foot: mpRows.length > 1 ? { k: 'Toplam', iptal: n0(iptal.length), iade: n0(iade.length), kismi: n0(kismi.length), qty: n0(sum(allTypes, retQty)), amt: tl(sum(allTypes, retAmt)), all: n0(base.length), rate: pct(base.length ? baseRet.length / base.length : 0) } : null,
+    });
+
+    // Ürünler
+    const prods = productRows(list, retItems).sort((a, b) => b.qty - a.qty || b.total - a.total).slice(0, 50);
+    table($('#r-products'), [
+      { key: 'name', label: 'Ürün', cls: 'trunc', render: (x) => `${esc(x.name)}${x.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(x.sku)}</span>` : ''}`, title: (x) => x.name },
+      { key: 'iptal', label: 'İptal', num: true, render: (x) => n0(x.types.iptal || 0) },
+      { key: 'iade', label: 'İade', num: true, render: (x) => n0(x.types.iade || 0) },
+      { key: 'qty', label: 'Toplam adet', num: true, render: (x) => n0(x.qty) },
+      { key: 'total', label: 'Tutar', num: true, render: (x) => tl(x.total) },
+      { key: 'mp', label: 'En çok', render: (x) => { const top = [...x.mps.entries()].sort((a, b) => b[1] - a[1])[0]; return top ? mpCell(top[0]) : ''; } },
+    ], prods, { empty: 'Ürün yok.' });
+
+    // Durumlar (Entegra'daki adlarıyla)
+    const bySt = groupBy(list, (o) => o.status || STATUS[o.sg]);
+    const stRows = [...bySt.entries()].map(([st, l]) => ({ st, sg: l[0].sg, count: l.length, amt: sum(l, retAmt) })).sort((a, b) => b.count - a.count);
+    table($('#r-status'), [
+      { key: 'st', label: 'Durum', render: (x) => `<span class="pill ${x.sg}">${esc(x.st)}</span>` },
+      { key: 'count', label: 'Sipariş', num: true, render: (x) => n0(x.count) },
+      { key: 'amt', label: 'Tutar', num: true, render: (x) => tl(x.amt) },
+    ], stRows, { empty: 'Durum yok.' });
+
+    // Liste
+    const sorted = sortOrders(list, r.sort, { changed: retDay, total: (o) => o.total, ret: retAmt, status: (o) => o.status });
+    const pg = paged(sorted, r);
+    $('#r-orders-sub').textContent = `${n0(list.length)} sipariş · başlığa tıklayarak sıralayın`;
+    table($('#r-orders'), [
+      { key: 'date', label: 'Sipariş tarihi', sort: true, render: (o) => `${trDate(o.date)} <span style="color:var(--muted)">${o.time || ''}</span>` },
+      { key: 'changed', label: 'İade/iptal tarihi', sort: true, render: (o) => (o.changed ? `${trDate(o.changed)} <span style="color:var(--muted)">${o.changed.slice(11, 16)}</span>` : '<span style="color:var(--muted)">—</span>'), title: () => 'Entegra\'daki son güncelleme zamanı' },
+      { key: 'no', label: 'Sipariş no', sort: true, render: (o) => esc(o.no || o.id) },
+      { key: 'mp', label: 'Pazaryeri', sort: true, render: (o) => mpCell(o.mp) },
+      { key: 'items', label: 'İade/iptal edilen ürünler', cls: 'trunc', render: (o) => itemsText(retItems(o).length ? retItems(o) : (o.items || [])), title: (o) => itemsTitle(o.items || []) },
+      { key: 'total', label: 'Sipariş tutarı', num: true, sort: true, render: (o) => tl2(o.total) },
+      { key: 'ret', label: 'İade/iptal tutarı', num: true, sort: true, render: (o) => `<span class="ret-amt">${tl2(retAmt(o))}</span>` },
+      { key: 'status', label: 'Durum', sort: true, render: rawStatusPill },
+    ], pg.rows, { empty: 'Bu filtrelerle iade veya iptal yok.', sort: r.sort, onSort: () => { r.page = 0; renderReturns(); }, rowAttr: (o) => `class="clickable" data-oid="${esc(o.id)}"` });
+    pager($('#r-pager'), list.length, r, pg, renderReturns, $('#r-orders'));
+  }
+
+  // ---------- KARŞILAŞTIRMA ----------
+  // Geçmiş yıllar Excel'den içe aktarılır ve data/gecmis.json'da şifreli durur.
+  // Bu yıl (ve sipariş verisi olan her yıl) canlı siparişlerden aylık olarak hesaplanır.
+  const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
+  async function encryptJson(obj, password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
+    return { v: 1, alg: 'AES-GCM/PBKDF2-SHA256', iterations: 250000, salt: b64(salt), iv: b64(iv), data: b64(new Uint8Array(data)) };
+  }
+
+  async function loadHistory(pass) {
+    S.history = { years: {} };
+    S.historyState = 'none';
+    let f;
+    try { f = await getJson('data/gecmis.json'); } catch { return; }
+    try {
+      const body = f.alg ? await decrypt(f, pass) : f;
+      S.history = body && body.years ? body : { years: {} };
+      S.historyState = 'ok';
+    } catch { S.historyState = 'unreadable'; }
+  }
+
+  const has = (v) => v !== undefined && v !== null && Number.isFinite(v);
+  const sumOf = (...vals) => (vals.some(has) ? vals.reduce((a, v) => a + (has(v) ? v : 0), 0) : null);
+
+  // past: Excel ayından, cur: canlı ay özetinden değer
+  const COMP = [
+    { k: 'sales', label: 'Satış tutarı', money: true, past: (m) => m.sales, cur: (a) => a.gross },
+    { k: 'net', label: 'Net satış', money: true, past: (m) => (has(m.sales) ? m.sales - (m.return || 0) - (m.cancel || 0) - (m.supplyCancel || 0) : null), cur: (a) => a.net },
+    { k: 'units', label: 'Satılan ürün adedi', past: (m) => m.units, cur: (a) => a.units },
+    { k: 'orders', label: 'Fatura / sipariş adedi', past: (m) => m.invoiceCnt, cur: (a) => a.orders },
+    { k: 'return', label: 'İade tutarı', money: true, past: (m) => m.return, cur: (a) => a.returnAmt },
+    { k: 'returnCnt', label: 'İade adedi', past: (m) => m.returnCnt, cur: (a) => a.returnCnt },
+    { k: 'cancel', label: 'İptal tutarı', money: true, past: (m) => sumOf(m.cancel, m.supplyCancel), cur: (a) => a.cancelAmt },
+    { k: 'cancelCnt', label: 'İptal adedi', past: (m) => sumOf(m.cancelCnt, m.supplyCancelCnt), cur: (a) => a.cancelCnt },
+    { k: 'commission', label: 'Komisyon', money: true, past: (m) => m.commission, cur: (a) => a.commission },
+    { k: 'cargo', label: 'Kargo', money: true, past: (m) => m.cargo, cur: (a) => a.cargo },
+  ];
+  const COMP_NOTES = [
+    '<b>Satış tutarı</b>: geçmiş yılda Excel\'deki satış tutarı; bu yıl iade ve iptaller dahil tüm siparişlerin tutarı.',
+    '<b>Net satış</b>: satış tutarından iade ve iptaller (geçmiş yılda tedarik iptali de) düşülmüş hali; bu yıl diğer ekranlardaki ciroyla aynıdır.',
+    '<b>Fatura / sipariş adedi</b>: geçmiş yılda kesilen fatura adedi; bu yıl iptal edilmeyen sipariş adedi.',
+    '<b>İptal</b>: geçmiş yılda tedarik iptali dahil. <b>İade adedi</b>: bu yıl iade ve kısmi iade olan sipariş sayısı.',
+  ];
+
+  // Canlı siparişlerden yılın aylık özeti
+  function liveYear(year) {
+    const out = {};
+    const today = todayTR();
+    for (let m = 1; m <= 12; m++) {
+      const ym = `${year}-${String(m).padStart(2, '0')}`;
+      const first = `${ym}-01`; const last = `${ym}-${String(daysInMonth(ym)).padStart(2, '0')}`;
+      const list = ordersBetween(first, last);
+      if (!list.length) continue;
+      const ok = sales(list);
+      const rets = list.filter((o) => o.sg === 'iade' || o.sg === 'kismi');
+      const canc = list.filter((o) => o.sg === 'iptal');
+      const from = S.dates[0] > first ? S.dates[0] : first;
+      const to = today < last ? today : last;
+      out[m] = {
+        gross: sum(list, (o) => o.total), net: sum(ok, amt), units: sum(list, (o) => o.qty),
+        orders: list.filter((o) => o.sg !== 'iptal').length,
+        returnAmt: sum(rets, retAmt), returnCnt: rets.length,
+        cancelAmt: sum(canc, (o) => o.total), cancelCnt: canc.length,
+        commission: sum(ok, (o) => o.commission), cargo: sum(ok, (o) => o.cargoPrice),
+        partial: from > first || to < last, days: dayCount(from, to), dim: daysInMonth(ym),
+      };
+    }
+    return out;
+  }
+
+  const liveYears = () => [...new Set(S.dates.map((d) => +d.slice(0, 4)))];
+  const histYears = () => Object.keys(S.history?.years || {}).map(Number);
+  // Bir yılın ölçü değeri: sipariş verisi varsa canlıdan, yoksa Excel'den
+  // Her ay için kaynak seçilir: tamamlanmış Entegra ayı > Excel ayı > devam eden Entegra ayı
+  function yearSource(year) {
+    const live = liveYears().includes(year) ? liveYear(year) : {};
+    const ex = S.history.years[year]?.months || {};
+    const months = {};
+    for (let m = 1; m <= 12; m++) {
+      if (live[m] && !live[m].partial) months[m] = { kind: 'live', row: live[m] };
+      else if (ex[m]) months[m] = { kind: 'excel', row: ex[m] };
+      else if (live[m]) months[m] = { kind: 'live', row: live[m] };
+    }
+    const kinds = new Set(Object.values(months).map((x) => x.kind));
+    return { year, months, hasLive: kinds.has('live'), hasExcel: kinds.has('excel') };
+  }
+  function val(src, m, metric) {
+    const e = src.months[m];
+    if (!e) return null;
+    const v = e.kind === 'live' ? metric.cur(e.row) : metric.past(e.row);
+    return has(v) ? v : null;
+  }
+  const partialOf = (src, m) => src.months[m]?.kind === 'live' && Boolean(src.months[m].row.partial);
+
+  function bindCompare() {
+    $('#k-import-btn').onclick = () => { $('#k-import').classList.remove('hidden'); $('#k-import').scrollIntoView({ block: 'start', behavior: 'smooth' }); };
+    $('#k-import-close').onclick = () => { $('#k-import').classList.add('hidden'); };
+    $('#k-month').onchange = (e) => { S.k.month = +e.target.value; renderCompare(); };
+    $('#k-file').onchange = onHistoryFile;
+    $('#k-year').oninput = () => { if (S.k.parsed) S.k.parsed.year = +$('#k-year').value || null; };
+    $('#k-download').onclick = downloadHistory;
+  }
+
+  async function onHistoryFile(e) {
+    const file = e.target.files?.[0];
+    const msg = $('#k-import-msg');
+    $('#k-import-actions').classList.add('hidden');
+    $('#k-preview').innerHTML = '';
+    S.k.parsed = null;
+    if (!file) return;
+    msg.innerHTML = '<p class="sub">Okunuyor…</p>';
+    try {
+      if (!window.MiniXlsx || !('DecompressionStream' in window)) throw new Error('Bu tarayıcı Excel okumayı desteklemiyor. Chrome, Edge veya Firefox\'un güncel sürümünü kullanın.');
+      const grid = await window.MiniXlsx.readXlsx(file);
+      const h = window.MiniXlsx.parseHistory(grid);
+      const fileYear = (file.name.match(/(20\d{2})/) || [])[1];
+      h.year = h.year || (fileYear ? +fileYear : null);
+      S.k.parsed = h;
+      $('#k-year').value = h.year || '';
+      const warn = [...h.warnings];
+      if (S.historyState === 'unreadable') warn.push('Mevcut gecmis.json dosyası şu anki şifreyle açılamadı; indireceğiniz dosya yalnızca bu yılı içerecek.');
+      if (h.year && S.history.years[h.year]) warn.push(`${h.year} yılı zaten ekli; indireceğiniz dosyada yeni hali kullanılacak.`);
+      msg.innerHTML = (warn.length ? `<div class="k-warn">${warn.map(esc).join('<br>')}</div>` : '') +
+        `<p class="sub">${Object.keys(h.months).length} ay, ${Object.keys(h.labels).length} ölçü okundu. Rakamları Excel'inizle kontrol edin:</p>`;
+      pastTable($('#k-preview'), h);
+      $('#k-import-actions').classList.remove('hidden');
+    } catch (err) {
+      msg.innerHTML = `<div class="k-err">${esc(err.message || 'Dosya okunamadı.')}</div>`;
+    }
+  }
+
+  async function downloadHistory() {
+    const h = S.k.parsed;
+    const year = +$('#k-year').value;
+    if (!h) return;
+    if (!year || year < 2000 || year > 2100) { $('#k-import-msg').insertAdjacentHTML('afterbegin', '<div class="k-err">Yılı yazın (ör. 2024).</div>'); return; }
+    const years = S.historyState === 'unreadable' ? {} : { ...(S.history.years || {}) };
+    years[year] = { months: h.months, labels: h.labels, importedAt: new Date().toISOString() };
+    const body = { v: 1, years };
+    const out = S.manifest.encrypted ? await encryptJson(body, S.password) : body;
+    const blob = new Blob([JSON.stringify(out)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'gecmis.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    // Bu oturumda hemen görünsün
+    S.history = body; S.historyState = 'ok';
+    if (S.k.years) S.k.years.add(year);
+    renderCompare();
+  }
+
+  // Excel'deki tüm ölçüler: satır = ay
+  function pastTable(el, h) {
+    const keys = Object.keys(h.labels);
+    const money = (k) => !/Cnt$/.test(k) && k !== 'units';
+    const rows = Array.from({ length: 12 }, (_, i) => ({ m: i + 1, ...(h.months[i + 1] || {}) })).filter((r) => Object.keys(r).length > 1);
+    const foot = { m: 'Toplam' };
+    for (const k of keys) foot[k] = money(k) ? tl(sum(rows, (r) => r[k])) : n0(sum(rows, (r) => r[k]));
+    table(el, [
+      { key: 'm', label: 'Ay', render: (r) => MONTHS[r.m - 1] },
+      ...keys.map((k) => ({ key: k, label: esc(h.labels[k]), num: true, render: (r) => (has(r[k]) ? (money(k) ? tl(r[k]) : n0(r[k])) : '—') })),
+    ], rows, { foot });
+  }
+
+  // Yıl renkleri: en yeni yıl mavi, bir önceki turuncu, daha eskiler sırayla
+  const YEAR_COLORS = ['--s1', '--s2', '--s3', '--s4', '--s7', '--s5'];
+
+  function renderCompare() {
+    const hy = histYears();
+    const ly = liveYears();
+    const all = [...new Set([...ly, ...hy])].sort((a, b) => a - b); // eskiden yeniye
+    if (S.historyState === 'unreadable') showNotice('Geçmiş yıl dosyası (gecmis.json) şu anki şifreyle açılamadı. <b>Geçmiş yıl ekle</b> ile Excel\'i yeniden ekleyin.');
+    const empty = all.length < 2;
+    $('#k-empty').classList.toggle('hidden', !empty);
+    $('#k-body').classList.toggle('hidden', empty);
+    if (empty) { $('#k-years').innerHTML = ''; return; }
+
+    // Seçili yıllar: varsayılan tüm yıllar (en fazla son 4)
+    if (!S.k.years) S.k.years = new Set(all.slice(-4));
+    for (const y of [...S.k.years]) if (!all.includes(y)) S.k.years.delete(y);
+    if (S.k.years.size < 2) S.k.years = new Set(all.slice(-Math.max(2, Math.min(4, all.length))));
+    const years = all.filter((y) => S.k.years.has(y));
+    const color = (y) => css(YEAR_COLORS[(all.length - 1 - all.indexOf(y)) % YEAR_COLORS.length]);
+    const tag = (y) => (hy.includes(y) && ly.includes(y) ? 'Excel + Entegra' : hy.includes(y) ? 'Excel' : 'Entegra');
+    $('#k-years').innerHTML = all.map((y) => `<button class="chip" data-y="${y}" aria-pressed="${S.k.years.has(y)}" title="${tag(y)}"><span class="sw" style="background:${color(y)}"></span>${y}</button>`).join('');
+    $$('#k-years .chip').forEach((c) => c.addEventListener('click', () => {
+      const y = +c.dataset.y;
+      if (S.k.years.has(y)) { if (S.k.years.size <= 2) return; S.k.years.delete(y); } else S.k.years.add(y);
+      renderCompare();
+    }));
+
+    const src = new Map(years.map((y) => [y, yearSource(y)]));
+    const ms = Array.from({ length: 12 }, (_, i) => i + 1);
+    const v = (y, m, mt) => val(src.get(y), m, mt);
+    const isPartial = (y, m) => partialOf(src.get(y), m);
+    const anyPartial = (m) => years.some((y) => isPartial(y, m));
+    const mark = (m) => (anyPartial(m) ? '*' : '');
+    const prevOf = (y) => years[years.indexOf(y) - 1];
+
+    // Ortak hesaplar: yıl toplamı, ortak (hepsinde tamamlanmış) aylar
+    const yearTotal = (y, x) => {
+      const mm = ms.filter((m) => v(y, m, x) !== null);
+      return { total: sum(mm, (m) => v(y, m, x)), n: mm.length, partial: mm.some((m) => isPartial(y, m)) };
+    };
+    const commonOf = (x) => ms.filter((m) => years.every((y) => v(y, m, x) !== null) && !anyPartial(m));
+    const shortRange = (c) => (c.length === 1 ? MONTHS[c[0] - 1] : `${MONTHS[c[0] - 1].slice(0, 3)}–${MONTHS[c[c.length - 1] - 1].slice(0, 3)}`);
+    const tipTitle = (i) => {
+      const py = years.find((y) => isPartial(y, i + 1));
+      const r = py && src.get(py).months[i + 1].row;
+      return `${MONTHS[i]}${r ? ` (${py} devam ediyor: ${r.days}/${r.dim} gün)` : ''}`;
+    };
+    // Alt satırlar: yıl toplamı, ortak aylar toplamı ve bir önceki yıla göre değişim
+    function totalRows(x, keyOf, deltaKeyOf) {
+      const f = x.money ? tl : n0;
+      const r1 = { m: 'Yıl toplamı' };
+      years.forEach((y) => { const t = yearTotal(y, x); r1[keyOf(y)] = t.n ? `${f(t.total)}<small>${t.n} ay${t.partial ? ' *' : ''}</small>` : '—'; });
+      const c = commonOf(x);
+      if (!c.length || years.length < 2) return [r1];
+      const r2 = { m: `Ortak ${c.length} ay <small>${shortRange(c)}</small>` };
+      const r3 = { m: 'Değişim <small>ortak aylarda, önceki yıla göre</small>' };
+      years.forEach((y, i) => {
+        const t = sum(c, (m) => v(y, m, x));
+        r2[keyOf(y)] = f(t);
+        if (i > 0) {
+          const d = delta(t, sum(c, (m) => v(years[i - 1], m, x))) || '—';
+          if (deltaKeyOf) r2[deltaKeyOf(y)] = d; else r3[keyOf(y)] = d;
+        }
+      });
+      return deltaKeyOf ? [r1, r2] : [r1, r2, r3];
+    }
+
+    // Birleşik tablo: Sipariş tutarı, Satılan ürün adedi, Fatura adedi tek tabloda (başlıklar ayrı, altında yıllar)
+    const GROUPS = [
+      { k: 'sales', title: 'Sipariş tutarı' },
+      { k: 'units', title: 'Satılan ürün adedi' },
+      { k: 'orders', title: 'Fatura adedi' },
+    ].map((g) => ({ ...g, mt: COMP.find((x) => x.k === g.k) })).filter((g) => years.some((y) => ms.some((m) => v(y, m, g.mt) !== null)));
+    const swY = (y) => `<span class="sw" style="background:${color(y)}"></span>`;
+    const cellV = (g, y, m) => { const x = v(y, m, g.mt); return x === null ? '—' : `<span class="${isPartial(y, m) ? 'partial' : ''}">${(g.mt.money ? tl : n0)(x)}</span>`; };
+    const mrows = ms.filter((m) => GROUPS.some((g) => years.some((y) => v(y, m, g.mt) !== null)));
+    const footRows = GROUPS.map((g) => totalRows(g.mt, (y) => y));
+    const nFoot = Math.max(...footRows.map((r) => r.length));
+    const footLabels = footRows.find((r) => r.length === nFoot) || [];
+    const thead = `<thead>
+      <tr><th rowspan="2">Ay</th>${GROUPS.map((g, gi) => `<th colspan="${years.length}" class="grp${gi ? ' gsep' : ''}">${g.title}</th>`).join('')}</tr>
+      <tr>${GROUPS.map((g, gi) => years.map((y, yi) => `<th class="num${gi && !yi ? ' gsep' : ''}"><span class="mp-cell">${swY(y)}${y}</span></th>`).join('')).join('')}</tr></thead>`;
+    const tbody = `<tbody>${mrows.map((m) => `<tr><td>${MONTHS[m - 1]}${mark(m)}</td>${GROUPS.map((g, gi) => years.map((y, yi) => `<td class="num${gi && !yi ? ' gsep' : ''}">${cellV(g, y, m)}</td>`).join('')).join('')}</tr>`).join('')}</tbody>`;
+    const tfoot = `<tfoot>${Array.from({ length: nFoot }, (_, ri) => `<tr><td>${footLabels[ri]?.m || ''}</td>${GROUPS.map((g, gi) => years.map((y, yi) => `<td class="num${gi && !yi ? ' gsep' : ''}">${footRows[gi][ri]?.[y] ?? ''}</td>`).join('')).join('')}</tr>`).join('')}</tfoot>`;
+    $('#k-panels').innerHTML = GROUPS.length ? `<div class="card k-combined">
+      <h2>Sipariş tutarı · Satılan ürün adedi · Fatura adedi</h2>
+      <p class="sub">${years.join(' · ')} · ay ay · altta yıl toplamları, ortak ayların toplamı ve önceki yıla göre değişim</p>
+      <div class="table-scroll"><table id="k-combined">${thead}${tbody}${tfoot}</table></div></div>` : '';
+
+    // Ölçüler: seçili yıllardan en az birinde değeri olanlar
+    const metrics = COMP.filter((mt) => years.some((y) => ms.some((m) => v(y, m, mt) !== null)));
+    if (!metrics.find((x) => x.k === S.k.metric)) S.k.metric = metrics[0]?.k;
+    const mt = metrics.find((x) => x.k === S.k.metric);
+    $('#k-metrics').innerHTML = metrics.map((x) => `<button class="chip metric" data-k="${x.k}" aria-pressed="${x.k === S.k.metric}">${x.label}</button>`).join('');
+    $$('#k-metrics .chip').forEach((c) => c.addEventListener('click', () => { S.k.metric = c.dataset.k; renderCompare(); }));
+    if (!mt) return;
+    const fmt = mt.money ? tl : n0;
+
+    // Ortak aylar: seçili yılların HEPSİNDE değeri olan ve hiçbirinde devam etmeyen aylar
+    const common = ms.filter((m) => years.every((y) => v(y, m, mt) !== null) && !anyPartial(m));
+    const range = common.length ? (common.length === 1 ? MONTHS[common[0] - 1] : `${MONTHS[common[0] - 1]}–${MONTHS[common[common.length - 1] - 1]} (${common.length} ay)`) : '';
+    const tot = (y) => sum(common, (m) => v(y, m, mt));
+    const kp = years.slice().reverse().map((y) => {
+      const p = prevOf(y);
+      return {
+        k: `${mt.label} · ${y}`,
+        v: common.length ? fmt(tot(y)) : '—',
+        d: !common.length ? 'tüm yıllarda tamamlanmış ortak ay yok' : p ? `${delta(tot(y), tot(p))} ${p}'e göre · ${range}` : range,
+      };
+    });
+    // Devam eden ay için ay sonu tahmini (en yeni yıl, bir önceki seçili yılın aynı ayına göre)
+    const last = years[years.length - 1]; const prev = prevOf(last);
+    const curM = ms.find((m) => isPartial(last, m) && `${last}-${String(m).padStart(2, '0')}` === todayTR().slice(0, 7));
+    if (curM && prev && v(prev, curM, mt) !== null && !isPartial(prev, curM)) {
+      const r = src.get(last).months[curM].row;
+      const proj = (v(last, curM, mt) / r.days) * r.dim;
+      kp.push({ k: `${MONTHS[curM - 1]} ${last} ay sonu tahmini`, v: fmt(proj), d: `${delta(proj, v(prev, curM, mt))} ${MONTHS[curM - 1]} ${prev}'e göre · ${r.days}/${r.dim} gün` });
+    }
+    $('#k-kpis').innerHTML = kpiHtml(kp);
+
+    // Grafik: yıllar yan yana
+    $('#k-chart-title').textContent = `${mt.label}: ${years.join(', ')}`;
+    $('#k-chart-sub').textContent = ms.some(anyPartial) ? '* İşaretli ayda verisi henüz tamamlanmamış yıl var' : 'Ay ay';
+    const series = years.map((y) => ({ label: String(y), color: color(y), data: ms.map((m) => v(y, m, mt)) }));
+    legend($('#k-legend'), series);
+    groupedBar('k-chart', ms.map((m) => `${MONTHS[m - 1].slice(0, 3)}${mark(m)}`), series, {
+      money: mt.money,
+      tooltipTitle: (i) => {
+        const py = years.find((y) => isPartial(y, i + 1));
+        const r = py && src.get(py).months[i + 1].row;
+        return `${MONTHS[i]}${r ? ` (${py} devam ediyor: ${r.days}/${r.dim} gün)` : ''}`;
+      },
+    });
+
+    // Ay ay tablo: her yıl + bir önceki seçili yıla göre değişim
+    $('#k-months-title').textContent = `${mt.label}: ay ay`;
+    $('#k-months-sub').textContent = 'Değişim: bir önceki yıla göre';
+    const cols = [{ key: 'm', label: 'Ay', render: (r) => `${MONTHS[r.m - 1]}${mark(r.m)}` }];
+    years.forEach((y, i) => {
+      cols.push({ key: `y${y}`, label: `<span class="mp-cell"><span class="sw" style="background:${color(y)}"></span>${y}</span>`, num: true, render: (r) => (r[y] !== null ? `<span class="${isPartial(y, r.m) ? 'partial' : ''}">${fmt(r[y])}</span>` : '—') });
+      if (i > 0) { const p = years[i - 1]; cols.push({ key: `d${y}`, label: 'Değişim', num: true, render: (r) => (r[y] !== null && r[p] !== null ? delta(r[y], r[p]) || '—' : '—') }); }
+    });
+    const rows = ms.map((m) => Object.assign({ m }, Object.fromEntries(years.map((y) => [y, v(y, m, mt)])))).filter((r) => years.some((y) => r[y] !== null));
+    table($('#k-months'), cols, rows, { foot: totalRows(mt, (y) => `y${y}`, (y) => `d${y}`) });
+
+    // Ay özeti: tüm ölçüler, seçili ay
+    const monthsWith = ms.filter((m) => years.some((y) => src.get(y).months[m]));
+    if (!monthsWith.includes(S.k.month)) S.k.month = [...monthsWith].reverse().find((m) => years.every((y) => src.get(y).months[m])) || monthsWith[monthsWith.length - 1];
+    $('#k-month').innerHTML = monthsWith.map((m) => `<option value="${m}"${m === S.k.month ? ' selected' : ''}>${MONTHS[m - 1]}${mark(m)}</option>`).join('');
+    const sm = S.k.month;
+    const scols = [{ key: 'l', label: 'Ölçü', render: (r) => r.mt.label }];
+    years.forEach((y, i) => {
+      scols.push({ key: `y${y}`, label: `${y}${isPartial(y, sm) ? '*' : ''}`, num: true, render: (r) => (r[y] !== null ? (r.mt.money ? tl(r[y]) : n0(r[y])) : '—') });
+      if (i > 0) { const p = years[i - 1]; scols.push({ key: `d${y}`, label: 'Değişim', num: true, render: (r) => (r[y] !== null && r[p] !== null ? delta(r[y], r[p]) || '—' : '—') }); }
+    });
+    table($('#k-summary'), scols, metrics.map((x) => Object.assign({ mt: x }, Object.fromEntries(years.map((y) => [y, v(y, sm, x)])))));
+
+    // Excel tabloları: seçili yıllardan Excel'i olanlar
+    const exYears = years.filter((y) => S.history.years[y]);
+    const pastCard = $('#k-past').closest('.card');
+    pastCard.classList.toggle('hidden', !exYears.length);
+    if (exYears.length) {
+      if (!exYears.includes(S.k.pastYear)) S.k.pastYear = exYears[exYears.length - 1];
+      $('#k-past-title').innerHTML = exYears.length > 1
+        ? `Excel verileri <select class="ctl" id="k-past-year" style="margin-left:8px;height:30px">${exYears.map((y) => `<option value="${y}"${y === S.k.pastYear ? ' selected' : ''}>${y}</option>`).join('')}</select>`
+        : `${S.k.pastYear} Excel verileri`;
+      const sel = $('#k-past-year');
+      if (sel) sel.onchange = (e) => { S.k.pastYear = +e.target.value; renderCompare(); };
+      $('#k-past-sub').textContent = 'Excel\'deki tüm ölçüler (komisyon, kargo, gelen para, masraf, ceza dahil)';
+      pastTable($('#k-past'), S.history.years[S.k.pastYear]);
+    }
+
+    $('#k-sub').textContent = years.map((y) => `${y} (${tag(y)})`).join(' · ');
+    $('#k-notes').innerHTML = [...COMP_NOTES,
+      'Toplamlar ve özet kartlar yalnızca seçili yılların <b>hepsinde</b> tamamlanmış olan ayları içerir.',
+      ms.some(anyPartial) ? '* İşaretli aylarda en az bir yılın verisi tamamlanmadı (ay devam ediyor ya da o ayın başından itibaren sipariş çekilmedi).' : ''].filter(Boolean).join('<br>');
+  }
+
+  // Gruplu çubuk grafik (yıllar yan yana)
+  function groupedBar(id, labels, series, opts = {}) {
+    S.charts[id] = { labels, series, opts, grouped: true };
+    drawGrouped(id);
+    const wrap = $(`#${id}`).parentElement;
+    if (!wrap._ro) {
+      let w = wrap.clientWidth;
+      wrap._ro = new ResizeObserver(() => { if (Math.abs(wrap.clientWidth - w) > 4) { w = wrap.clientWidth; drawGrouped(id); } });
+      wrap._ro.observe(wrap);
+    }
+  }
+
+  function drawGrouped(id) {
+    const { labels, series, opts } = S.charts[id];
+    const money = opts.money !== false;
+    const fmt = money ? tl : n0;
+    const holder = $(`#${id}`);
+    const wrap = holder.parentElement;
+    const W = Math.max(280, wrap.clientWidth);
+    const H = wrap.clientHeight || 260;
+    const n = labels.length;
+    const maxV = Math.max(0, ...series.flatMap((s) => s.data.map((v) => v || 0)));
+    const { max, step } = niceMax(maxV);
+    const yl = (v) => (money ? `${fmtCompact.format(v)} ₺` : fmtCompact.format(v));
+    const ticks = []; for (let v = 0; v <= max + 1e-9; v += step) ticks.push(v);
+    const m = { l: Math.max(...ticks.map((t) => yl(t).length)) * 6.6 + 12, r: 6, t: 8, b: 24 };
+    const pw = W - m.l - m.r; const ph = H - m.t - m.b;
+    const band = pw / n;
+    const k = series.length;
+    const bw = Math.max(3, Math.min(22, (band * 0.76 - (k - 1) * 2) / k));
+    const y = (v) => m.t + ph - (v / max) * ph;
+    let s = '';
+    for (const t of ticks) s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${m.l - 8}" y="${y(t) + 4}" text-anchor="end" fill="var(--muted)" font-size="11">${yl(t)}</text>`;
+    s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>`;
+    s += `<rect class="hl" x="0" y="${m.t}" width="${band}" height="${ph}" fill="var(--ink)" opacity="0" rx="4"/>`;
+    for (let i = 0; i < n; i++) {
+      const cx = m.l + band * i + band / 2;
+      const gw = k * bw + (k - 1) * 2;
+      series.forEach((se, j) => {
+        const v = se.data[i];
+        if (!v || v <= 0) return;
+        const x = cx - gw / 2 + j * (bw + 2);
+        const yy = y(v); const h = y(0) - yy;
+        const r = Math.min(4, h, bw / 2);
+        s += `<path d="M${x},${yy + h}V${yy + r}Q${x},${yy} ${x + r},${yy}H${x + bw - r}Q${x + bw},${yy} ${x + bw},${yy + r}V${yy + h}Z" fill="${se.color}"/>`;
+      });
+      s += `<text x="${cx}" y="${H - 6}" text-anchor="middle" fill="var(--muted)" font-size="11">${esc(labels[i])}</text>`;
+    }
+    holder.outerHTML = `<div id="${id}" style="position:relative;height:100%"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" style="display:block;font-family:inherit;touch-action:pan-y">${s}</svg><div class="tip hidden" role="tooltip"></div></div>`;
+    const root = $(`#${id}`); const svg = $('svg', root); const tip = $('.tip', root); const hl = $('.hl', svg);
+    const hide = () => { tip.classList.add('hidden'); hl.setAttribute('opacity', '0'); };
+    const show = (ev) => {
+      const rc = svg.getBoundingClientRect();
+      const i = Math.floor((ev.clientX - rc.left - m.l) / band);
+      if (i < 0 || i >= n) { hide(); return; }
+      hl.setAttribute('x', m.l + band * i); hl.setAttribute('opacity', '0.06');
+      const [a, b] = series.map((se) => se.data[i]);
+      tip.innerHTML = `<div class="tt">${esc(opts.tooltipTitle ? opts.tooltipTitle(i) : labels[i])}</div>` +
+        series.map((se) => `<div class="tr"><span class="sw" style="background:${se.color}"></span><span>${esc(se.label)}</span><b>${has(se.data[i]) ? fmt(se.data[i]) : '—'}</b></div>`).join('') +
+        (has(a) && has(b) ? `<div class="tr tot"><span></span><span>Değişim</span><b>${delta(b, a) || '—'}</b></div>` : '');
+      tip.classList.remove('hidden');
+      const tw = tip.offsetWidth; const cx = m.l + band * i + band / 2;
+      let left = cx + 14; if (left + tw > W) left = cx - tw - 14; if (left < 0) left = 0;
+      tip.style.left = `${left}px`;
+      tip.style.top = `${Math.max(0, Math.min(ev.clientY - rc.top - 20, H - tip.offsetHeight))}px`;
+    };
+    svg.addEventListener('pointermove', show); svg.addEventListener('pointerdown', show); svg.addEventListener('pointerleave', hide);
   }
 
   // ---------- CSV ----------
@@ -855,13 +1979,13 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
+  const r2 = (n) => Math.round((n || 0) * 100) / 100;
 
   function exportOrders(list, name) {
-    const rows = [['Tarih', 'Saat', 'Sipariş No', 'Pazaryeri', 'Durum', 'Durum Grubu', 'Stok Kodu', 'Ürün', 'Adet', 'Satır Tutarı', 'Sipariş Tutarı', 'Komisyon', 'Kargo Ücreti', 'Kargo Firması', 'Şehir']];
+    const rows = [['Tarih', 'Saat', 'Sipariş No', 'Pazaryeri', 'Stok Kodu', 'Ürün', 'Adet', 'Satır Tutarı', 'Sipariş Tutarı']];
     for (const o of list) {
-      const items = o.items?.length ? o.items : [{ sku: '', name: '', qty: o.qty, total: o.total }];
-      items.forEach((it, i) => rows.push([trDate(o.date), o.time, o.no || o.id, mpLabel(o.mp), o.status, STATUS[o.sg], it.sku, it.name, it.qty, it.total,
-        i === 0 ? o.total : '', i === 0 ? o.commission : '', i === 0 ? o.cargoPrice : '', o.carrier, o.city]));
+      const items = o.items?.length ? saleItems(o) : [{ sku: '', name: '', qty: o.qty, total: o.total }];
+      items.forEach((it, i) => rows.push([trDate(o.date), o.time, o.no || o.id, mpLabel(o.mp), it.sku, it.name, it.qty, r2(it.total), i === 0 ? r2(amt(o)) : '']));
     }
     download(rows, name);
   }
@@ -870,7 +1994,17 @@
     const prods = productRows(list);
     const keys = S.mpOrder;
     const rows = [['Stok Kodu', 'Ürün', 'Adet', 'Sipariş', 'Ort. Fiyat', 'Ciro', ...keys.map(mpLabel)]];
-    for (const p of prods) rows.push([p.sku, p.name, p.qty, p.orderCount, Math.round(p.avgPrice * 100) / 100, Math.round(p.total * 100) / 100, ...keys.map((k) => Math.round((p.mps.get(k) || 0) * 100) / 100)]);
+    for (const p of prods) rows.push([p.sku, p.name, p.qty, p.orderCount, r2(p.avgPrice), r2(p.total), ...keys.map((k) => r2(p.mps.get(k) || 0))]);
+    download(rows, name);
+  }
+
+  function exportReturns(list, name) {
+    const rows = [['Sipariş Tarihi', 'İade/İptal Tarihi', 'Sipariş No', 'Pazaryeri', 'Tür', 'Durum', 'Stok Kodu', 'Ürün', 'Adet', 'Satır Tutarı', 'Sipariş Tutarı', 'İade/İptal Tutarı']];
+    for (const o of list) {
+      const items = retItems(o).length ? retItems(o) : (o.items?.length ? o.items : [{ sku: '', name: '', qty: o.qty, total: o.total }]);
+      items.forEach((it, i) => rows.push([trDate(o.date), o.changed ? trDate(o.changed) : '', o.no || o.id, mpLabel(o.mp), RET_TYPES[o.sg] || o.sg, o.status, it.sku, it.name, it.qty, r2(it.total),
+        i === 0 ? r2(o.total) : '', i === 0 ? r2(retAmt(o)) : '']));
+    }
     download(rows, name);
   }
 
