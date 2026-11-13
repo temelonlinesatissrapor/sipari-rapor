@@ -53,5 +53,11 @@ jobs:
             echo "Değişiklik yok."
           else
             git commit -m "Sipariş verisi güncellendi: $(TZ=Europe/Istanbul date '+%d.%m.%Y %H:%M')"
-            git push
+            # Bu arada rapor ekranından düzeltme kaydedilmiş olabilir: önce onu alıp sonra gönder
+            ok=0
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push && { ok=1; break; }
+              echo "Gönderim tekrar deneniyor ($i)…"; sleep 5
+            done
+            [ "$ok" = 1 ]
           fi
