@@ -80,8 +80,9 @@
     mpOrder: [],
     charts: {},
     view: 'gunluk',
-    g: { start: null, end: null, page: 0 },
-    a: { month: null, list: { month: null, mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 }, src: [] } },
+    g: { start: null, end: null, page: 0, psort: { k: 'qty', dir: -1 } },
+    a: { month: null, list: { month: null, mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 }, src: [], edit: false } },
+    edits: { saved: { v: 1, orders: {}, savedAt: '' }, pending: {}, state: 'none' },
     d: { start: null, end: null, preset: '30', mps: null, status: '', q: '', gran: 'auto', metric: 'total', page: 0, sort: { k: 'date', dir: -1 }, psort: { k: 'total', dir: -1 } },
     k: { years: null, pastYear: null, metric: 'sales', month: null, parsed: null },
     r: { start: null, end: null, preset: '30', datetype: 'order', type: '', mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 } },
@@ -188,7 +189,11 @@
     await loadHistory(pass);
     S.password = pass;
     S.userName = name || '';
-    ingest(orders);
+    // Ham veri saklanır; elle düzeltmeler her seferinde bunun kopyasına uygulanır
+    S.rawOrders = orders;
+    S.rawById = new Map(orders.map((o) => [String(o.id), o]));
+    await loadEdits(pass);
+    ingest(applyEdits(orders));
     $('#gate').classList.add('hidden');
     $('#boot').classList.add('hidden');
     $('#app').classList.remove('hidden');
@@ -305,7 +310,7 @@
     applyPreset(S.d, S.d.preset);
     applyPreset(S.r, S.r.preset);
 
-    bindDaily(); bindMonthly(); bindDetail(); bindReturns(); bindCompare();
+    bindDaily(); bindMonthly(); bindDetail(); bindReturns(); bindCompare(); bindEdits();
     $$('.tab').forEach((b) => b.addEventListener('click', () => { go(b.dataset.view); setMenu(false); }));
     $('#menu-btn').onclick = () => setMenu(!$('#app').classList.contains('menu-open'));
     $('#scrim').onclick = () => { setMenu(false); closeOrder(); };
@@ -314,7 +319,7 @@
     // Sipariş satırına tıklayınca detay paneli
     document.addEventListener('click', (e) => {
       const tr = e.target.closest('tr[data-oid]');
-      if (tr && !e.target.closest('a, button')) openOrder(tr.dataset.oid);
+      if (tr && !e.target.closest('a, button, input, select, label')) openOrder(tr.dataset.oid);
     });
     $('#theme-btn').onclick = () => {
       const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -441,7 +446,8 @@
     if (sort && opts.onSort) {
       $$('th.sortable', el).forEach((th) => th.addEventListener('click', () => {
         const k = th.dataset.k;
-        if (sort.k === k) sort.dir *= -1; else { sort.k = k; sort.dir = -1; }
+        const col = cols.find((c) => c.key === k);
+        if (sort.k === k) sort.dir *= -1; else { sort.k = k; sort.dir = col && !col.num ? 1 : -1; }
         opts.onSort();
       }));
     }
@@ -677,13 +683,14 @@
       o.city ? ['Şehir', esc(o.city)] : null,
       o.carrier ? ['Kargo', esc(o.carrier)] : null,
       o.changed ? ['Son güncelleme', `${trDate(o.changed)} ${o.changed.slice(11, 16)}`] : null,
+      o.edited ? ['Elle düzeltme', o.edited.pending ? '<span class="edit-badge pending">kaydedilmedi</span>' : `${o.edited.by ? esc(o.edited.by) : 'Düzeltildi'}${o.edited.at ? ` · ${trDate(o.edited.at.slice(0, 10))} ${o.edited.at.slice(11, 16)}` : ''}`] : null,
       ['Entegra no', esc(o.id)],
     ].filter(Boolean);
     const ret = retAmt(o);
     $('#dr-body').innerHTML = `<div><span class="pill ${o.sg}">${esc(o.status || STATUS[o.sg])}</span></div>
       <dl class="dl">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
       <div><h3 class="section-title" style="margin:0 0 8px">Ürünler (${its.length})</h3>
-        <div class="drawer-items">${its.length ? its.map((i) => `<div class="it${i.r || isLost(o) ? ' ret' : ''}"><span>${esc(i.name)}${i.r ? ' <span class="pill iade">iade</span>' : ''}</span><span class="amt">${tl2(i.total)}</span><small>${i.sku ? `${esc(i.sku)} · ` : ''}${n0(i.qty)} adet${i.qty > 1 ? ` · birim ${tl2(i.total / i.qty)}` : ''}</small></div>`).join('') : '<div class="it"><span>Ürün bilgisi yok</span></div>'}</div></div>
+        <div class="drawer-items">${its.length ? its.map((i) => `<div class="it${i.r || isLost(o) ? ' ret' : ''}"><span>${esc(i.name)}${i.r ? ' <span class="pill iade">iade</span>' : ''}</span><span class="amt">${tl2(i.total)}</span><small>${i.sku ? `${esc(i.sku)} · ` : ''}${n0(i.qty)} adet${i.qty > 1 ? ` · birim ${tl2(i.total / i.qty)}` : ''}${i.orig ? ` · <s>${n0(i.orig.qty)} adet, ${tl2(i.orig.total)}</s>` : ''}${i.synth ? ' · elle düzeltmeden' : ''}</small></div>`).join('') : '<div class="it"><span>Ürün bilgisi yok</span></div>'}</div></div>
       <div class="drawer-tot">
         <span>Sipariş tutarı</span><b>${tl2(o.total)}</b>
         ${ret ? `<span>İade / iptal</span><b class="ret-amt">− ${tl2(ret)}</b>` : ''}
@@ -798,14 +805,23 @@
     stackedBar('g-trend', days.map((d) => `${d.slice(8, 10)}.${d.slice(5, 7)}`), tg, { tooltipTitle: (i) => trDateLong(days[i]) });
 
     // Ürünler
-    $('#g-products-title').textContent = single ? 'Günün en çok satanları' : 'En çok satanlar';
-    const prods = productRows(list).sort((a, b) => b.qty - a.qty).slice(0, 10);
+    // Günün ürünleri: tamamı, başlığa tıklayarak sıralanır (ürün adında ilk tıklama A→Z)
+    $('#g-products-title').textContent = single ? 'Günün ürünleri' : 'Seçilen günlerin ürünleri';
+    const ps = S.g.psort;
+    const prods = productRows(list).sort((a, b) => {
+      const va = a[ps.k]; const vb = b[ps.k];
+      const c = typeof va === 'string' ? String(va).localeCompare(String(vb), 'tr', { sensitivity: 'base' }) : va - vb;
+      return c * ps.dir || b.qty - a.qty;
+    });
+    $('#g-products-sub').textContent = `${n0(prods.length)} ürün · başlıklara tıklayarak sıralayın`;
     table($('#g-products'), [
-      { key: 'name', label: 'Ürün', cls: 'trunc', render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'sku', label: 'Stok kodu', sort: true, render: (r) => esc(r.sku || '—') },
       { key: 'mps', label: 'Pazaryeri', render: (r) => [...r.mps.keys()].map((k) => `<span title="${esc(mpLabel(k))}" class="sw" style="display:inline-block;margin-right:3px;background:${mpColor(k)}"></span>`).join('') },
-      { key: 'qty', label: 'Adet', num: true, render: (r) => n0(r.qty) },
-      { key: 'total', label: 'Ciro', num: true, render: (r) => tl(r.total) },
-    ], prods, { empty: 'Satış yok.' });
+      { key: 'orderCount', label: 'Sipariş', num: true, sort: true, render: (r) => n0(r.orderCount) },
+      { key: 'qty', label: 'Adet', num: true, sort: true, render: (r) => n0(r.qty) },
+      { key: 'total', label: 'Ciro', num: true, sort: true, render: (r) => tl(r.total) },
+    ], prods, { empty: 'Satış yok.', sort: ps, onSort: renderDaily, foot: prods.length > 1 ? { name: 'Toplam', qty: n0(sum(prods, (r) => r.qty)), total: tl(sum(prods, (r) => r.total)) } : null });
 
     $('#g-orders-title').textContent = single ? 'Günün siparişleri' : 'Seçilen günlerin siparişleri';
     $('#g-orders-sub').textContent = `${n0(list.length)} sipariş · iade ve iptaller hariç`;
@@ -927,7 +943,7 @@
       if (!L.mps.has(o.mp)) continue;
       const its = o.items?.length ? saleItems(o) : [{ sku: '', name: '—', qty: o.qty, total: amt(o) }];
       for (const it of its) {
-        const r = { o, date: o.date + o.time, no: o.no || o.id, mp: mpLabel(o.mp), customer: o.customer || '', name: it.name, sku: it.sku, qty: it.qty, total: it.total, price: it.qty ? it.total / it.qty : it.total };
+        const r = { o, it, i: it.i, date: o.date + o.time, no: o.no || o.id, mp: mpLabel(o.mp), customer: o.customer || '', name: it.name, sku: it.sku, qty: it.qty, total: it.total, price: it.qty ? it.total / it.qty : (it.orig && it.orig.qty ? it.orig.total / it.orig.qty : it.total) };
         if (q && ![r.no, r.customer, r.name, r.sku].some((x) => lc(x).includes(q))) continue;
         rows.push(r);
       }
@@ -948,25 +964,321 @@
     const rows = monthListRows(list);
     const orderCount = new Set(rows.map((r) => r.o.id)).size;
     const noCustomer = rows.length && rows.every((r) => !r.customer);
-    $('#a-list-sub').textContent = `${n0(orderCount)} sipariş · ${n0(rows.length)} ürün satırı · iade ve iptaller hariç${noCustomer ? ' · müşteri adları bir sonraki sipariş çekiminden sonra görünür' : ''}`;
+    const editedCount = rows.filter((r) => r.it?.orig).length;
+    $('#a-list-sub').textContent = `${n0(orderCount)} sipariş · ${n0(rows.length)} ürün satırı · iade ve iptaller hariç${editedCount ? ` · ${n0(editedCount)} satır düzeltildi` : ''}${noCustomer ? ' · müşteri adları bir sonraki sipariş çekiminden sonra görünür' : ''}`;
+
+    // Düzenleme modu düğmeleri
+    const np = pendingCount();
+    const gh = ghCfg();
+    $('#a-edit-toggle').hidden = L.edit;
+    $('#a-edit-save').hidden = !L.edit; $('#a-edit-cancel').hidden = !L.edit; $('#a-gh-open').hidden = !L.edit;
+    $('#a-edit-save').textContent = np ? `Kaydet (${np})` : 'Kaydet';
+    $('#a-edit-save').disabled = !np;
+    $('#a-edit-bar').hidden = !L.edit;
+    $('#a-edit-bar-text').innerHTML = L.edit
+      ? `<b>Düzenleme açık.</b> Adet ya da birim fiyatı değiştirip Enter'a basın. Tutar düşerse fark <b>kısmi iade</b> sayılır. ${np ? `<b>${np}</b> kaydedilmemiş değişiklik var.` : ''} ${gh ? `Kayıt: GitHub (${esc(gh.owner)}/${esc(gh.repo)})` : 'Kayıt: dosya indirilir (GitHub bağlantısı için ⚙)'}`
+      : '';
+    if (!L.edit) { $('#a-gh').hidden = true; $('#a-edit-confirm').hidden = true; }
+
     const pg = paged(rows, L);
+    const editable = (r) => L.edit && Number.isInteger(r.i);
+    const mark = (r) => (r.it?.orig ? `<span class="edit-badge${r.o.edited?.pending && S.edits.pending[r.o.id]?.lines?.[r.i] !== undefined ? ' pending' : ''}" title="Orijinal: ${n0(r.it.orig.qty)} adet · ${tl2(r.it.orig.total)}">${S.edits.pending[r.o.id]?.lines?.[r.i] !== undefined ? 'kaydedilmedi' : 'düzeltildi'}</span>` : '');
     table($('#a-list'), [
       { key: 'date', label: 'Tarih', sort: true, render: (r) => trDate(r.o.date) },
       { key: 'no', label: 'Sipariş no', sort: true, render: (r) => esc(r.no) },
       { key: 'mp', label: 'Pazaryeri', sort: true, render: (r) => mpCell(r.o.mp) },
       { key: 'customer', label: 'Müşteri', sort: true, cls: 'cust', render: (r) => esc(r.customer || '—'), title: (r) => r.customer },
-      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
-      { key: 'qty', label: 'Adet', num: true, sort: true, render: (r) => n0(r.qty) },
-      { key: 'price', label: 'Satış fiyatı', num: true, sort: true, render: (r) => tl2(r.price) },
-      { key: 'total', label: 'Tutar', num: true, sort: true, render: (r) => tl2(r.total) },
+      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', render: (r) => `${esc(r.name)} ${mark(r)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'qty', label: 'Adet', num: true, sort: true, render: (r) => (editable(r) ? `<input class="cell-in" type="number" inputmode="numeric" min="0" step="1" data-f="qty" value="${r.qty}" aria-label="Adet">` : `${n0(r.qty)}${r.it?.orig && r.it.orig.qty !== r.qty ? ` <s class="orig">${n0(r.it.orig.qty)}</s>` : ''}`) },
+      { key: 'price', label: 'Satış fiyatı', num: true, sort: true, render: (r) => (editable(r) ? `<input class="cell-in wide" type="number" inputmode="decimal" min="0" step="0.01" data-f="unit" value="${r2e(r.price)}" aria-label="Birim satış fiyatı">` : tl2(r.price)) },
+      { key: 'total', label: 'Tutar', num: true, sort: true, render: (r) => `${tl2(r.total)}${r.it?.orig && Math.abs(r.it.orig.total - r.total) > 0.009 ? `<br><s class="orig">${tl2(r.it.orig.total)}</s>` : ''}` },
+      ...(L.edit ? [{ key: 'x', label: '', render: (r) => (r.it?.orig ? '<button class="icon-btn sm" data-reset title="Orijinal değere dön" aria-label="Orijinal değere dön"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a6 6 0 1 0 2-4.5"/><path d="M4 3.5V7h3.5"/></svg></button>' : '') }] : []),
     ], pg.rows, {
       empty: 'Bu ay seçili pazaryerlerinde sipariş yok.',
-      rowAttr: (r) => `class="clickable" data-oid="${esc(r.o.id)}"`,
+      rowAttr: (r) => `class="${L.edit ? 'editing' : 'clickable'}${r.it?.orig ? ' edited' : ''}" data-oid="${esc(r.o.id)}"${Number.isInteger(r.i) ? ` data-i="${r.i}"` : ''}`,
       sort: L.sort,
       onSort: () => { L.page = 0; renderMonthList(L.src); },
       foot: rows.length ? { date: 'Toplam', qty: n0(sum(rows, (r) => r.qty)), total: tl2(sum(rows, (r) => r.total)) } : null,
     });
     pager($('#a-list-pager'), rows.length, L, pg, () => renderMonthList(L.src), $('#a-list'), 'satır');
+  }
+
+  // ---------- DÜZELTMELER (adet / fiyat) ----------
+  // Elle yapılan düzeltmeler data/duzeltmeler.json'da şifreli durur ve her açılışta Entegra verisinin üzerine uygulanır.
+  // Otomatik çekimler bu dosyaya dokunmaz. Bir satırın tutarı düşürülürse fark kısmi iade sayılır.
+  const EDIT_FILE = 'docs/data/duzeltmeler.json';
+  const r2e = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+  function loadDraft() {
+    try { S.edits.pending = JSON.parse(store.get('duzeltme-taslak') || '{}') || {}; } catch { S.edits.pending = {}; }
+  }
+  function saveDraft() {
+    const n = Object.keys(S.edits.pending).length;
+    if (n) store.set('duzeltme-taslak', JSON.stringify(S.edits.pending)); else store.del('duzeltme-taslak');
+  }
+  const pendingCount = () => Object.values(S.edits.pending).reduce((a, o) => a + Object.keys(o.lines || {}).length, 0);
+
+  async function readEditBody(f, pass) {
+    const body = f && f.alg ? await decrypt(f, pass) : f;
+    return body && body.orders ? body : { v: 1, orders: {}, savedAt: '' };
+  }
+
+  async function loadEdits(pass) {
+    S.edits.saved = { v: 1, orders: {}, savedAt: '' };
+    S.edits.state = 'none';
+    loadDraft();
+    // GitHub bağlantısı varsa en güncel hali doğrudan oradan okunur (site yayını 1-2 dakika gecikebilir)
+    const gh = ghCfg();
+    if (gh) {
+      try {
+        const r = await ghGet(gh);
+        if (r) { S.edits.saved = await readEditBody(r.json, pass); S.edits.state = 'ok'; }
+        else S.edits.state = 'ok';
+        return;
+      } catch { /* sitedeki dosyaya geç */ }
+    }
+    let f = null;
+    try { f = await getJson('data/duzeltmeler.json'); } catch { f = null; }
+    if (f) {
+      try { S.edits.saved = await readEditBody(f, pass); S.edits.state = 'ok'; } catch { S.edits.state = 'unreadable'; }
+    }
+    // Bu tarayıcıdan az önce kaydedilmiş, henüz yayına çıkmamış hal daha yeniyse onu kullan
+    try {
+      const local = JSON.parse(store.get('duzeltme-son') || 'null');
+      if (local && local.savedAt && local.savedAt > (S.edits.saved.savedAt || '')) S.edits.saved = local;
+    } catch { /* yok say */ }
+  }
+
+  // Kayıtlı + taslak düzeltmeleri birleştirir (taslakta null = düzeltmeyi kaldır)
+  function mergeEdits(base, pending, meta) {
+    const out = JSON.parse(JSON.stringify(base || {}));
+    for (const [oid, p] of Object.entries(pending || {})) {
+      const cur = out[oid] || { lines: {} };
+      for (const [i, v] of Object.entries(p.lines || {})) { if (v === null) delete cur.lines[i]; else cur.lines[i] = v; }
+      if (Object.keys(cur.lines).length) out[oid] = { ...cur, ...(meta || {}) }; else delete out[oid];
+    }
+    return out;
+  }
+  const effectiveEdits = () => mergeEdits(S.edits.saved.orders, S.edits.pending);
+
+  // Düzeltmeleri siparişlere uygular (orijinal veri değişmez, kopyası üzerinde çalışılır)
+  function applyEdits(raw) {
+    const orders = typeof structuredClone === 'function' ? structuredClone(raw) : JSON.parse(JSON.stringify(raw));
+    const eff = effectiveEdits();
+    const savedIds = S.edits.saved.orders || {};
+    for (const o of orders) {
+      (o.items || []).forEach((it, i) => { it.i = i; });
+      const e = eff[o.id];
+      if (!e || !o.items?.length || isLost(o)) continue;
+      for (const [k, v] of Object.entries(e.lines)) {
+        let it = o.items[+k];
+        if (!it || (v.sku && it.sku && it.sku !== v.sku)) it = o.items.find((x) => v.sku && x.sku === v.sku);
+        if (!it) continue;
+        it.orig = { qty: it.qty, total: it.total, r: it.r };
+        it.qty = Math.max(0, Math.round(v.qty));
+        it.total = Math.max(0, r2e(v.total));
+        delete it.r;
+      }
+      const edited = o.items.filter((it) => it.orig);
+      // Azaltılan miktar/tutar: iade olarak görünmesi için ayrı satır
+      for (const it of edited) {
+        const dq = Math.max(0, it.orig.qty - it.qty);
+        const dt = r2e(it.orig.total - it.total);
+        if (dt > 0.009) o.items.push({ sku: it.sku, name: it.name, qty: dq, total: dt, r: 'iade', synth: true, i: it.i });
+      }
+      const sale = r2e(sum(o.items.filter((x) => !x.r), (x) => x.total));
+      const ret = r2e(o.total - sale);
+      if (ret > 0.009) {
+        o.sg = 'kismi'; o.ret = ret;
+        o.retQty = sum(o.items.filter((x) => x.r), (x) => x.qty);
+      } else {
+        if (o.sg === 'kismi') o.sg = 'teslim';
+        o.ret = 0; o.retQty = 0;
+        if (sale > o.total) o.total = sale;
+      }
+      o.edited = { by: e.by || '', at: e.at || '', pending: Boolean(S.edits.pending[o.id]), saved: Boolean(savedIds[o.id]) };
+      o.status = `${o.status || STATUS[o.sg]} · düzeltildi`;
+    }
+    return orders;
+  }
+
+  function reingest() {
+    ingest(applyEdits(S.rawOrders));
+    render();
+  }
+
+  // Bir satırı düzelt: değer orijinaline eşitse düzeltme kaldırılır
+  function setLineEdit(oid, i, qty, unit) {
+    const raw = S.rawById.get(String(oid));
+    const it = raw?.items?.[i];
+    if (!it) return;
+    const q = Math.max(0, Math.round(Number(qty)));
+    const total = r2e(q * Math.max(0, Number(unit)));
+    const p = S.edits.pending[oid] || { lines: {} };
+    const sameAsOrig = q === it.qty && Math.abs(total - it.total) < 0.01;
+    if (sameAsOrig) {
+      if (S.edits.saved.orders?.[oid]?.lines?.[i]) p.lines[i] = null; else delete p.lines[i];
+    } else p.lines[i] = { sku: it.sku || '', qty: q, total };
+    if (Object.keys(p.lines).length) S.edits.pending[oid] = p; else delete S.edits.pending[oid];
+    saveDraft();
+    reingest();
+  }
+  function resetLine(oid, i) {
+    const raw = S.rawById.get(String(oid));
+    const it = raw?.items?.[i];
+    if (it) setLineEdit(oid, i, it.qty, it.qty ? it.total / it.qty : it.total);
+  }
+
+  // ---------- GitHub'a kaydetme ----------
+  function ghCfg() {
+    try { const c = JSON.parse(store.get('gh-ayar') || 'null'); return c && c.token && c.owner && c.repo ? c : null; } catch { return null; }
+  }
+  function ghGuess() {
+    const h = location.hostname;
+    if (!h.endsWith('.github.io')) return { owner: '', repo: '' };
+    const owner = h.split('.')[0];
+    const repo = location.pathname.split('/').filter(Boolean)[0] || `${owner}.github.io`;
+    return { owner, repo };
+  }
+  const ghHeaders = (c) => ({ Authorization: `Bearer ${c.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' });
+  function ghError(res, what) {
+    if (res.status === 401) return new Error('GitHub anahtarı geçersiz ya da süresi dolmuş. Yeni bir anahtar oluşturup bağlantı ayarına girin.');
+    if (res.status === 403) return new Error('GitHub anahtarının bu depoya yazma izni yok. Anahtarı oluştururken "Contents: Read and write" iznini verin.');
+    if (res.status === 404) return new Error('Depo bulunamadı ya da anahtarın bu depoya erişimi yok. Depo adını ve anahtarın depo seçimini kontrol edin.');
+    return new Error(`GitHub ${what} başarısız (HTTP ${res.status}).`);
+  }
+  async function ghGet(c) {
+    const res = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}/contents/${EDIT_FILE}?t=${Date.now()}`, { headers: ghHeaders(c), cache: 'no-store' });
+    if (res.status === 404) {
+      // Dosya yok mu, depo mu yok? Depoya erişimi kontrol et
+      const repo = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}`, { headers: ghHeaders(c), cache: 'no-store' });
+      if (!repo.ok) throw ghError(repo, 'okuma');
+      return null;
+    }
+    if (!res.ok) throw ghError(res, 'okuma');
+    const j = await res.json();
+    const text = new TextDecoder().decode(Uint8Array.from(atob(String(j.content).replace(/\s/g, '')), (ch) => ch.charCodeAt(0)));
+    return { sha: j.sha, json: JSON.parse(text) };
+  }
+  async function ghPut(c, envelope, sha, message) {
+    const content = b64(new TextEncoder().encode(JSON.stringify(envelope)));
+    return fetch(`https://api.github.com/repos/${c.owner}/${c.repo}/contents/${EDIT_FILE}`, {
+      method: 'PUT', headers: { ...ghHeaders(c), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, content, ...(sha ? { sha } : {}) }),
+    });
+  }
+  async function ghTest(c) {
+    const res = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}`, { headers: ghHeaders(c), cache: 'no-store' });
+    if (!res.ok) throw ghError(res, 'bağlantısı');
+    const j = await res.json();
+    if (j.permissions && !j.permissions.push) throw new Error('Anahtar depoyu görebiliyor ama yazamıyor. "Contents: Read and write" iznini verin.');
+    return j.full_name || `${c.owner}/${c.repo}`;
+  }
+
+  async function encryptEdits(body) {
+    return S.manifest.encrypted ? encryptJson(body, S.password) : body;
+  }
+
+  async function saveEdits() {
+    const n = pendingCount();
+    if (!n) { toast('Kaydedilecek değişiklik yok.'); return; }
+    const meta = { by: S.userName || '', at: new Date().toISOString() };
+    const btn = $('#a-edit-save');
+    btn.disabled = true; btn.textContent = 'Kaydediliyor…';
+    try {
+      const gh = ghCfg();
+      if (gh) {
+        let done = false;
+        for (let attempt = 0; attempt < 3 && !done; attempt++) {
+          // Her denemede GitHub'daki en güncel hal okunur; başkasının düzeltmeleri korunur
+          const cur = await ghGet(gh);
+          // GitHub'da dosya yoksa eldeki (sitedeki dosyadan okunan) düzeltmeler temel alınır
+          const remote = cur ? await readEditBody(cur.json, S.password) : { v: 1, orders: S.edits.saved.orders || {} };
+          const body = { v: 1, savedAt: meta.at, orders: mergeEdits(remote.orders, S.edits.pending, meta) };
+          const res = await ghPut(gh, await encryptEdits(body), cur?.sha, `Sipariş düzeltmesi: ${n} satır${S.userName ? ` (${S.userName})` : ''}`);
+          if (res.ok) { S.edits.saved = body; done = true; }
+          else if (res.status !== 409 && res.status !== 422) throw ghError(res, 'kaydetme');
+        }
+        if (!done) throw new Error('Kayıt sırasında başka bir değişiklikle çakıştı. Tekrar deneyin.');
+        toast(`${n} düzeltme GitHub'a kaydedildi. Site 1–2 dakika içinde herkes için güncellenir.`);
+      } else {
+        const body = { v: 1, savedAt: meta.at, orders: mergeEdits(S.edits.saved.orders, S.edits.pending, meta) };
+        downloadJson(await encryptEdits(body), 'duzeltmeler.json');
+        S.edits.saved = body;
+        toast('duzeltmeler.json indirildi. GitHub\'da docs/data klasörüne yükleyin.', 9000);
+      }
+      try { store.set('duzeltme-son', JSON.stringify(S.edits.saved)); } catch { /* yok say */ }
+      S.edits.pending = {}; saveDraft();
+      reingest();
+    } catch (err) {
+      toast(err.message || 'Kaydedilemedi.', 9000, true);
+    } finally {
+      btn.disabled = false; btn.textContent = 'Kaydet';
+    }
+  }
+
+  function downloadJson(obj, name) {
+    const blob = new Blob([JSON.stringify(obj)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  let toastTimer;
+  function toast(msg, ms = 5000, isErr = false) {
+    const t = $('#toast');
+    t.textContent = msg; t.classList.toggle('err', isErr); t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+  }
+
+  function bindEdits() {
+    const L = S.a.list;
+    $('#a-edit-toggle').onclick = () => { L.edit = !L.edit; renderMonthList(L.src); };
+    $('#a-edit-save').onclick = saveEdits;
+    $('#a-edit-cancel').onclick = () => {
+      if (!pendingCount()) { L.edit = false; renderMonthList(L.src); return; }
+      $('#a-edit-confirm').hidden = false;
+    };
+    $('#a-edit-discard').onclick = () => { S.edits.pending = {}; saveDraft(); $('#a-edit-confirm').hidden = true; reingest(); };
+    $('#a-edit-keep').onclick = () => { $('#a-edit-confirm').hidden = true; };
+    $('#a-gh-open').onclick = () => { const p = $('#a-gh'); p.hidden = !p.hidden; if (!p.hidden) fillGh(); };
+    $('#a-gh-save').onclick = async () => {
+      const c = { token: $('#a-gh-token').value.trim() || ghCfg()?.token || '', owner: $('#a-gh-owner').value.trim(), repo: $('#a-gh-repo').value.trim() };
+      const msg = $('#a-gh-msg');
+      if (!c.token || !c.owner || !c.repo) { msg.className = 'k-err'; msg.textContent = 'Anahtar, kullanıcı adı ve depo adı gerekli.'; return; }
+      msg.className = 'sub'; msg.textContent = 'Kontrol ediliyor…';
+      try {
+        const name = await ghTest(c);
+        store.set('gh-ayar', JSON.stringify(c));
+        msg.className = 'sub ok'; msg.textContent = `Bağlandı: ${name}. Düzeltmeler artık doğrudan GitHub'a kaydedilecek.`;
+        $('#a-gh-token').value = '';
+        renderMonthList(L.src);
+      } catch (err) { msg.className = 'k-err'; msg.textContent = err.message; }
+    };
+    $('#a-gh-remove').onclick = () => { store.del('gh-ayar'); fillGh(); $('#a-gh-msg').className = 'sub'; $('#a-gh-msg').textContent = 'Bağlantı bu tarayıcıdan kaldırıldı.'; renderMonthList(L.src); };
+    // Satır içi düzenleme
+    $('#a-list').addEventListener('change', (e) => {
+      const inp = e.target.closest('input.cell-in');
+      if (!inp) return;
+      const tr = inp.closest('tr');
+      const q = tr.querySelector('input[data-f="qty"]').value;
+      const u = tr.querySelector('input[data-f="unit"]').value.replace(',', '.');
+      setLineEdit(tr.dataset.oid, +tr.dataset.i, q, u);
+    });
+    $('#a-list').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-reset]');
+      if (b) { const tr = b.closest('tr'); resetLine(tr.dataset.oid, +tr.dataset.i); }
+    });
+    if (pendingCount()) toast(`Kaydedilmemiş ${pendingCount()} düzeltmeniz var. Aylık ekranda "Kaydet" ile kaydedin.`, 8000);
+  }
+  function fillGh() {
+    const c = ghCfg(); const g = ghGuess();
+    $('#a-gh-owner').value = c?.owner || g.owner;
+    $('#a-gh-repo').value = c?.repo || g.repo;
+    $('#a-gh-token').placeholder = c ? 'Kayıtlı (değiştirmek için yenisini yapıştırın)' : 'github_pat_…';
+    $('#a-gh-remove').hidden = !c;
+    $('#a-gh-state').textContent = c ? `Bağlı: ${c.owner}/${c.repo}` : 'Bağlı değil: düzeltmeler dosya olarak indirilir.';
   }
 
   // ---------- DETAYLI ----------

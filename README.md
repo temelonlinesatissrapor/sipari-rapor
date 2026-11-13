@@ -98,6 +98,20 @@ muhasebe:Muhasebe-Raporu-77
 - Excel'de ay adları (Ocak … Aralık) bir sütunda alt alta, ölçü başlığı (Satış tutarı, İade, Komisyon…) ay adlarının üstünde olmalıdır. 2024 dosyasındaki düzen bu şekildedir.
 - `DASHBOARD_PASSWORD` değişirse `gecmis.json` açılamaz; Excel'i aynı adımlarla yeniden ekleyin.
 
+## Sipariş düzeltmeleri (kısmi iade için adet / fiyat)
+
+**Aylık → Sipariş listesi → Düzenle** ile her ürün satırının adedini ve birim satış fiyatını değiştirebilirsiniz.
+
+- Tutar düşerse aradaki fark **kısmi iade** sayılır ve İade & İptal ekranında görünür.
+- Düzeltmeler `docs/data/duzeltmeler.json` dosyasında şifreli durur. Otomatik sipariş çekimi bu dosyaya dokunmaz; ekran her açılışta düzeltmeleri Entegra verisinin üzerine uygular.
+- Satırın yanındaki geri al düğmesi orijinal değere döndürür.
+- Kaydedilmemiş değişiklikler tarayıcıda saklanır; sayfayı kapatsanız da kaybolmaz.
+
+**Kaydetme:**
+- **GitHub bağlantısıyla (önerilen):** Düzenle modunda ⚙ düğmesine basıp bir erişim anahtarı girin. Sonrasında **Kaydet** düğmesi düzeltmeleri doğrudan sitenize kaydeder; birkaç dakika içinde herkes görür. Anahtar yalnızca o tarayıcıda saklanır.
+  - Anahtar: GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token → *Only select repositories* (rapor deposu) → *Repository permissions → Contents: Read and write*.
+- **Bağlantı olmadan:** **Kaydet** `duzeltmeler.json` dosyasını indirir; GitHub'da `docs/data` klasörüne yükleyin.
+
 ## Alan eşleştirme (gerekirse)
 
 Entegra hesaplarında alan adları farklılık gösterebilir. İlk çalıştırmada Actions kaydında şu satırları göreceksiniz:
