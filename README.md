@@ -112,6 +112,13 @@ muhasebe:Muhasebe-Raporu-77
   - Anahtar: GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token → *Only select repositories* (rapor deposu) → *Repository permissions → Contents: Read and write*.
 - **Bağlantı olmadan:** **Kaydet** `duzeltmeler.json` dosyasını indirir; GitHub'da `docs/data` klasörüne yükleyin.
 
+## Excel'e aktarma
+
+- Her ekranın başlığındaki **Tümünü Excel'e aktar** düğmesi, o ekrandaki tüm alanları tek bir Excel dosyasında ayrı sayfalar halinde indirir (ilk sayfa: özet kartları).
+- Her kartın sağ üstündeki **Excel** düğmesi yalnızca o alanı indirir. Sayfalı listelerde ekranda görünen 50 satır değil, filtreye uyan **tüm** satırlar aktarılır.
+- Tutarlar kuruşlu ve ₺ biçiminde, adetler sayı, oranlar yüzde olarak gelir; Excel'de doğrudan toplanabilir. Başlık satırı sabittir ve filtrelenebilir.
+- **Sipariş satırları / İade satırları / Ürün özeti** düğmeleri her ürünü ayrı satırda veren ayrıntılı dosyalar üretir.
+
 ## Alan eşleştirme (gerekirse)
 
 Entegra hesaplarında alan adları farklılık gösterebilir. İlk çalıştırmada Actions kaydında şu satırları göreceksiniz:

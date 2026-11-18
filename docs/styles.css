@@ -351,3 +351,12 @@ s.orig { color: var(--muted); font-size: 11.5px; }
 .gh-help .steps { margin-top: 8px; }
 .toast { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 60; background: var(--ink); color: var(--surface); padding: 11px 18px; border-radius: 10px; font-size: 13.5px; box-shadow: var(--shadow-lg); max-width: min(560px, calc(100vw - 32px)); }
 .toast.err { background: var(--down); color: #fff; }
+
+/* ---------- Excel'e aktarma ---------- */
+.card.has-xl { position: relative; }
+.card.has-xl > .xl-btn { position: absolute; top: 14px; right: 16px; }
+.card.has-xl > h2, .card.has-xl > .sub, .card.has-xl > .card-head { padding-right: 96px; }
+.xl-btn { height: 30px; padding: 0 10px; font-size: 12.5px; gap: 6px; box-shadow: none; color: var(--ink-2); }
+.xl-btn .ico { width: 15px; height: 15px; color: #1d7a45; }
+.btn.xl-all .ico { color: inherit; }
+@media (max-width: 640px) { .card.has-xl > .xl-btn { position: static; margin-bottom: 8px; } .card.has-xl > h2, .card.has-xl > .sub { padding-right: 0; } }

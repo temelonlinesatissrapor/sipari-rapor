@@ -20,10 +20,13 @@
   const fmtN = new Intl.NumberFormat('tr-TR');
   const fmtCompact = new Intl.NumberFormat('tr-TR', { notation: 'compact', maximumFractionDigits: 1 });
   const fmtPct = new Intl.NumberFormat('tr-TR', { style: 'percent', maximumFractionDigits: 1 });
-  const tl = (n) => fmtTL.format(n || 0);
+  // Excel'e aktarırken (XL.precise) tutarlar kuruşlu, adet ve yüzdeler tam değerle yazılır
+  const XL = { precise: false };
+  const fmtPctX = new Intl.NumberFormat('tr-TR', { style: 'percent', maximumFractionDigits: 3 });
+  const tl = (n) => (XL.precise ? fmtTL2 : fmtTL).format(n || 0);
   const tl2 = (n) => fmtTL2.format(n || 0);
-  const n0 = (n) => fmtN.format(Math.round(n || 0));
-  const pct = (n) => (Number.isFinite(n) ? fmtPct.format(n) : '—');
+  const n0 = (n) => (XL.precise ? fmtN.format(Math.round((n || 0) * 100) / 100) : fmtN.format(Math.round(n || 0)));
+  const pct = (n) => (Number.isFinite(n) ? (XL.precise ? fmtPctX : fmtPct).format(n) : '—');
 
   const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
   const DAYS = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
@@ -311,6 +314,7 @@
     applyPreset(S.r, S.r.preset);
 
     bindDaily(); bindMonthly(); bindDetail(); bindReturns(); bindCompare(); bindEdits();
+    addExportButtons();
     $$('.tab').forEach((b) => b.addEventListener('click', () => { go(b.dataset.view); setMenu(false); }));
     $('#menu-btn').onclick = () => setMenu(!$('#app').classList.contains('menu-open'));
     $('#scrim').onclick = () => { setMenu(false); closeOrder(); };
@@ -430,7 +434,11 @@
   }
 
   // Basit tablo oluşturucu
-  function table(el, cols, rows, opts = {}) {
+  function table(el, allCols, rows, opts = {}) {
+    const feetX = opts.foot ? (Array.isArray(opts.foot) ? opts.foot : [opts.foot]) : [];
+    // Excel'e aktarma için: tüm satırlar (sayfalı listelerde ekrandakiler değil hepsi) ve sütunlar saklanır
+    el._x = { cols: allCols, rows: opts.exportRows || rows, feet: rows.length ? feetX : [] };
+    const cols = allCols.filter((c) => !c.exportOnly);
     if (!rows.length) { el.innerHTML = `<tbody><tr><td class="empty" colspan="${cols.length}">${opts.empty || 'Bu aralıkta veri yok.'}</td></tr></tbody>`; return; }
     const sort = opts.sort;
     const head = cols.map((c) => {
@@ -484,10 +492,10 @@
       { key: 'date', label: 'Tarih', sort: true, render: (o) => `${trDate(o.date)} <span style="color:var(--muted)">${o.time || ''}</span>` },
       { key: 'no', label: 'Sipariş no', sort: true, render: (o) => esc(o.no || o.id) },
       { key: 'mp', label: 'Pazaryeri', sort: true, render: (o) => mpCell(o.mp) },
-      { key: 'items', label: 'Ürünler', sort: true, cls: 'trunc', render: (o) => itemsText(saleItems(o).length || !o.items?.length ? saleItems(o) : o.items, o.sg === 'kismi' ? ` <span class="pill kismi">${n0(retQty(o))} ürün iade</span>` : ''), title: (o) => itemsTitle(o.items || []) },
+      { key: 'items', label: 'Ürünler', sort: true, cls: 'trunc', x: (o) => (saleItems(o).length || !o.items?.length ? saleItems(o) : o.items).map((i) => `${i.qty} × ${i.name}`).join('; '), render: (o) => itemsText(saleItems(o).length || !o.items?.length ? saleItems(o) : o.items, o.sg === 'kismi' ? ` <span class="pill kismi">${n0(retQty(o))} ürün iade</span>` : ''), title: (o) => itemsTitle(o.items || []) },
       { key: 'qty', label: 'Adet', num: true, sort: true, render: (o) => n0(saleQty(o)) },
       { key: 'total', label: 'Tutar', num: true, sort: true, render: (o) => tl2(amt(o)) },
-    ], pg.rows, { empty: 'Sipariş yok.', sort: sortable ? state.sort : null, onSort: () => { state.page = 0; rerender(); }, rowAttr: (o) => `class="clickable" data-oid="${esc(o.id)}"` });
+    ], pg.rows, { empty: 'Sipariş yok.', sort: sortable ? state.sort : null, onSort: () => { state.page = 0; rerender(); }, rowAttr: (o) => `class="clickable" data-oid="${esc(o.id)}"`, exportRows: list });
     pager(pagerEl, list.length, state, pg, rerender, el);
   }
 
@@ -635,6 +643,7 @@
     const groups = chartGroups(S.mpOrder);
     const items = groups.map((g) => ({ ...g, value: sum(list.filter((o) => g.members.includes(o.mp)), amt) })).filter((g) => g.value > 0).sort((a, b) => b.value - a.value);
     const total = sum(items, (g) => g.value);
+    el._x = { items, total };
     if (!total) { el.innerHTML = '<p class="empty">Bu aralıkta satış yok.</p>'; return; }
     const R = 74; const C = 2 * Math.PI * R; const gap = items.length > 1 ? 2.5 : 0;
     let off = 0;
@@ -659,6 +668,7 @@
     for (const o of list) if (o.time) cnt[D(o.date).getUTCDay()][+o.time.slice(0, 2)]++;
     const avg = cnt.map((row, g) => row.map((c) => (daysOf[g] ? c / daysOf[g] : 0)));
     const max = Math.max(0, ...avg.flat());
+    el._x = max ? { avg, order } : null;
     if (!max) { el.innerHTML = '<p class="empty">Saat bilgisi olan sipariş yok.</p>'; return; }
     const f1 = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 1 });
     const shade = (v) => (v ? `color-mix(in srgb, var(--s1) ${Math.round(14 + 86 * (v / max))}%, var(--surface-2))` : 'var(--surface-2)');
@@ -817,9 +827,9 @@
     });
     $('#g-products-sub').textContent = `${n0(prods.length)} ürün · başlıklara tıklayarak sıralayın`;
     table($('#g-products'), [
-      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', x: (r) => r.name, render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
       { key: 'sku', label: 'Stok kodu', sort: true, render: (r) => esc(r.sku || '—') },
-      { key: 'mps', label: 'Pazaryeri', render: (r) => [...r.mps.keys()].map((k) => `<span title="${esc(mpLabel(k))}" class="sw" style="display:inline-block;margin-right:3px;background:${mpColor(k)}"></span>`).join('') },
+      { key: 'mps', label: 'Pazaryeri', x: (r) => [...r.mps.keys()].map(mpLabel).join(', '), render: (r) => [...r.mps.keys()].map((k) => `<span title="${esc(mpLabel(k))}" class="sw" style="display:inline-block;margin-right:3px;background:${mpColor(k)}"></span>`).join('') },
       { key: 'orderCount', label: 'Sipariş', num: true, sort: true, render: (r) => n0(r.orderCount) },
       { key: 'qty', label: 'Adet', num: true, sort: true, render: (r) => n0(r.qty) },
       { key: 'total', label: 'Ciro', num: true, sort: true, render: (r) => tl(r.total) },
@@ -844,7 +854,7 @@
     $('#a-list-csv').onclick = () => {
       const rows = monthListRows(S.a.list.src);
       download([['Tarih', 'Saat', 'Sipariş No', 'Pazaryeri', 'Müşteri', 'Stok Kodu', 'Ürün', 'Adet', 'Satış Fiyatı', 'Tutar'],
-        ...rows.map((r) => [trDate(r.o.date), r.o.time, r.no, r.mp, r.customer, r.sku, r.name, r.qty, r2(r.price), r2(r.total)])], `siparis-listesi-${S.a.month}`);
+        ...rows.map((r) => [trDate(r.o.date), r.o.time, r.no, r.mp, r.customer, r.sku, r.name, r.qty, r2(r.price), r2(r.total)])], `siparis-listesi-${S.a.month}`, 'Sipariş listesi');
     };
   }
 
@@ -905,6 +915,7 @@
     // Ürünler
     table($('#a-products'), [
       { key: 'name', label: 'Ürün', cls: 'trunc', render: (r) => esc(r.name), title: (r) => `${r.name} ${r.sku ? `(${r.sku})` : ''}` },
+      { key: 'skuX', label: 'Stok kodu', exportOnly: true, x: (r) => r.sku || '' },
       { key: 'qty', label: 'Adet', num: true, render: (r) => n0(r.qty) },
       { key: 'total', label: 'Ciro', num: true, render: (r) => tl(r.total) },
       { key: 'mp', label: 'En çok', render: (r) => { const top = [...r.mps.entries()].sort((a, b) => b[1] - a[1])[0]; return top ? mpCell(top[0]) : ''; } },
@@ -991,13 +1002,15 @@
       { key: 'no', label: 'Sipariş no', sort: true, render: (r) => esc(r.no) },
       { key: 'mp', label: 'Pazaryeri', sort: true, render: (r) => mpCell(r.o.mp) },
       { key: 'customer', label: 'Müşteri', sort: true, cls: 'cust', render: (r) => esc(r.customer || '—'), title: (r) => r.customer },
-      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', render: (r) => `${esc(r.name)} ${mark(r)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
-      { key: 'qty', label: 'Adet', num: true, sort: true, render: (r) => (editable(r) ? `<input class="cell-in" type="number" inputmode="numeric" min="0" step="1" data-f="qty" value="${r.qty}" aria-label="Adet">` : `${n0(r.qty)}${r.it?.orig && r.it.orig.qty !== r.qty ? ` <s class="orig">${n0(r.it.orig.qty)}</s>` : ''}`) },
-      { key: 'price', label: 'Satış fiyatı', num: true, sort: true, render: (r) => (editable(r) ? `<input class="cell-in wide" type="number" inputmode="decimal" min="0" step="0.01" data-f="unit" value="${r2e(r.price)}" aria-label="Birim satış fiyatı">` : tl2(r.price)) },
-      { key: 'total', label: 'Tutar', num: true, sort: true, render: (r) => `${tl2(r.total)}${r.it?.orig && Math.abs(r.it.orig.total - r.total) > 0.009 ? `<br><s class="orig">${tl2(r.it.orig.total)}</s>` : ''}` },
-      ...(L.edit ? [{ key: 'x', label: '', render: (r) => (r.it?.orig ? '<button class="icon-btn sm" data-reset title="Orijinal değere dön" aria-label="Orijinal değere dön"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a6 6 0 1 0 2-4.5"/><path d="M4 3.5V7h3.5"/></svg></button>' : '') }] : []),
+      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', x: (r) => r.name, render: (r) => `${esc(r.name)} ${mark(r)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'skuX', label: 'Stok kodu', exportOnly: true, x: (r) => r.sku || '' },
+      { key: 'qty', label: 'Adet', num: true, sort: true, x: (r) => r.qty, render: (r) => (editable(r) ? `<input class="cell-in" type="number" inputmode="numeric" min="0" step="1" data-f="qty" value="${r.qty}" aria-label="Adet">` : `${n0(r.qty)}${r.it?.orig && r.it.orig.qty !== r.qty ? ` <s class="orig">${n0(r.it.orig.qty)}</s>` : ''}`) },
+      { key: 'price', label: 'Satış fiyatı', num: true, sort: true, x: (r) => ({ v: r2e(r.price), s: 'money' }), render: (r) => (editable(r) ? `<input class="cell-in wide" type="number" inputmode="decimal" min="0" step="0.01" data-f="unit" value="${r2e(r.price)}" aria-label="Birim satış fiyatı">` : tl2(r.price)) },
+      { key: 'total', label: 'Tutar', num: true, sort: true, x: (r) => ({ v: r2e(r.total), s: 'money' }), render: (r) => `${tl2(r.total)}${r.it?.orig && Math.abs(r.it.orig.total - r.total) > 0.009 ? `<br><s class="orig">${tl2(r.it.orig.total)}</s>` : ''}` },
+      ...(L.edit ? [{ key: 'x', label: '', noExport: true, render: (r) => (r.it?.orig ? '<button class="icon-btn sm" data-reset title="Orijinal değere dön" aria-label="Orijinal değere dön"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a6 6 0 1 0 2-4.5"/><path d="M4 3.5V7h3.5"/></svg></button>' : '') }] : []),
     ], pg.rows, {
       empty: 'Bu ay seçili pazaryerlerinde sipariş yok.',
+      exportRows: rows,
       rowAttr: (r) => `class="${L.edit ? 'editing' : 'clickable'}${r.it?.orig ? ' edited' : ''}" data-oid="${esc(r.o.id)}"${Number.isInteger(r.i) ? ` data-i="${r.i}"` : ''}`,
       sort: L.sort,
       onSort: () => { L.page = 0; renderMonthList(L.src); },
@@ -1382,13 +1395,14 @@
     });
     const maxT = Math.max(0, ...prods.map((x) => x.total));
     table($('#d-products'), [
-      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', x: (r) => r.name, render: (r) => `${esc(r.name)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
+      { key: 'skuX', label: 'Stok kodu', exportOnly: true, x: (r) => r.sku || '' },
       { key: 'qty', label: 'Adet', num: true, sort: true, render: (r) => n0(r.qty) },
       { key: 'orderCount', label: 'Sipariş', num: true, sort: true, render: (r) => n0(r.orderCount) },
       { key: 'avgPrice', label: 'Ort. fiyat', num: true, sort: true, render: (r) => tl2(r.avgPrice) },
       { key: 'total', label: 'Ciro', num: true, sort: true, render: (r) => tl(r.total) },
-      { key: 'mix', label: 'Pazaryeri dağılımı', render: (r) => mixBar(r.mps, r.total, maxT) },
-    ], prods.slice(0, 300), { sort: ps, onSort: renderDetail, empty: 'Bu filtrelerle ürün yok.' });
+      { key: 'mix', label: 'Pazaryeri dağılımı', x: (r) => [...r.mps.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${mpLabel(k)}: ${tl(v)}`).join('; '), render: (r) => mixBar(r.mps, r.total, maxT) },
+    ], prods.slice(0, 300), { sort: ps, onSort: renderDetail, empty: 'Bu filtrelerle ürün yok.', exportRows: prods });
 
     // Şehirler
     const byCity = groupBy(list.filter((o) => o.city), (o) => o.city);
@@ -1517,7 +1531,8 @@
     // Ürünler
     const prods = productRows(list, retItems).sort((a, b) => b.qty - a.qty || b.total - a.total).slice(0, 50);
     table($('#r-products'), [
-      { key: 'name', label: 'Ürün', cls: 'trunc', render: (x) => `${esc(x.name)}${x.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(x.sku)}</span>` : ''}`, title: (x) => x.name },
+      { key: 'name', label: 'Ürün', cls: 'trunc', x: (x) => x.name, render: (x) => `${esc(x.name)}${x.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(x.sku)}</span>` : ''}`, title: (x) => x.name },
+      { key: 'skuX', label: 'Stok kodu', exportOnly: true, x: (x) => x.sku || '' },
       { key: 'iptal', label: 'İptal', num: true, render: (x) => n0(x.types.iptal || 0) },
       { key: 'iade', label: 'İade', num: true, render: (x) => n0(x.types.iade || 0) },
       { key: 'qty', label: 'Toplam adet', num: true, render: (x) => n0(x.qty) },
@@ -1543,11 +1558,11 @@
       { key: 'changed', label: 'İade/iptal tarihi', sort: true, render: (o) => (o.changed ? `${trDate(o.changed)} <span style="color:var(--muted)">${o.changed.slice(11, 16)}</span>` : '<span style="color:var(--muted)">—</span>'), title: () => 'Entegra\'daki son güncelleme zamanı' },
       { key: 'no', label: 'Sipariş no', sort: true, render: (o) => esc(o.no || o.id) },
       { key: 'mp', label: 'Pazaryeri', sort: true, render: (o) => mpCell(o.mp) },
-      { key: 'items', label: 'İade/iptal edilen ürünler', cls: 'trunc', render: (o) => itemsText(retItems(o).length ? retItems(o) : (o.items || [])), title: (o) => itemsTitle(o.items || []) },
+      { key: 'items', label: 'İade/iptal edilen ürünler', cls: 'trunc', x: (o) => (retItems(o).length ? retItems(o) : (o.items || [])).map((i) => `${i.qty} × ${i.name}`).join('; '), render: (o) => itemsText(retItems(o).length ? retItems(o) : (o.items || [])), title: (o) => itemsTitle(o.items || []) },
       { key: 'total', label: 'Sipariş tutarı', num: true, sort: true, render: (o) => tl2(o.total) },
       { key: 'ret', label: 'İade/iptal tutarı', num: true, sort: true, render: (o) => `<span class="ret-amt">${tl2(retAmt(o))}</span>` },
       { key: 'status', label: 'Durum', sort: true, render: rawStatusPill },
-    ], pg.rows, { empty: 'Bu filtrelerle iade veya iptal yok.', sort: r.sort, onSort: () => { r.page = 0; renderReturns(); }, rowAttr: (o) => `class="clickable" data-oid="${esc(o.id)}"` });
+    ], pg.rows, { empty: 'Bu filtrelerle iade veya iptal yok.', sort: r.sort, onSort: () => { r.page = 0; renderReturns(); }, rowAttr: (o) => `class="clickable" data-oid="${esc(o.id)}"`, exportRows: sorted });
     pager($('#r-pager'), list.length, r, pg, renderReturns, $('#r-orders'));
   }
 
@@ -1807,6 +1822,7 @@
       <h2>Sipariş tutarı · Satılan ürün adedi · Fatura adedi</h2>
       <p class="sub">${years.join(' · ')} · ay ay · altta yıl toplamları, ortak ayların toplamı ve önceki yıla göre değişim</p>
       <div class="table-scroll"><table id="k-combined">${thead}${tbody}${tfoot}</table></div></div>` : '';
+    const kc = $('#k-panels .card'); if (kc) addCardButton(kc);
 
     // Ölçüler: seçili yıllardan en az birinde değeri olanlar
     const metrics = COMP.filter((mt) => years.some((y) => ms.some((m) => v(y, m, mt) !== null)));
@@ -1966,18 +1982,219 @@
     svg.addEventListener('pointermove', show); svg.addEventListener('pointerdown', show); svg.addEventListener('pointerleave', hide);
   }
 
-  // ---------- CSV ----------
-  function download(rows, name) {
-    const csv = rows.map((r) => r.map((v) => {
-      const s = typeof v === 'number' ? String(v).replace('.', ',') : String(v ?? '');
-      return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    }).join(';')).join('\r\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  // ---------- EXCEL'E AKTARMA ----------
+  // Her kartta "Excel" düğmesi (o alanın verisi) ve her ekranda "Tümünü Excel'e aktar" (tüm alanlar, ayrı sayfalar).
+  const XL_ICON = '<svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3" width="13" height="14" rx="2"/><path d="M7 7.5l6 5M13 7.5l-6 5"/></svg>';
+  const decodeEnt = (s) => s.replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  // HTML hücreyi düz metne çevirir (küçük notlar, üstü çizili eski değerler ve etiketler atılır)
+  function htmlText(html) {
+    return decodeEnt(String(html ?? '')
+      .replace(/<small[^>]*>[\s\S]*?<\/small>/gi, '')
+      .replace(/<s(\s[^>]*)?>[\s\S]*?<\/s>/gi, '')
+      .replace(/<span class="edit-badge[^"]*"[^>]*>[\s\S]*?<\/span>/gi, '')
+      .replace(/<span class="track"[\s\S]*?<\/span><\/span>/gi, '')
+      .replace(/<br\s*\/?>/gi, ' ')
+      .replace(/<[^>]+>/g, ''))
+      .replace(/\s+/g, ' ').trim();
+  }
+  // "₺1.234,56" → para, "%12,5" / "▲ %12" → yüzde, "1.234" → sayı
+  function parseCell(text) {
+    const t = String(text).trim();
+    if (!t || t === '—') return null;
+    const neg = /^[-−▼]/.test(t) || /▼/.test(t);
+    const core = t.replace(/[▲▼\s]/g, '').replace(/^[-−]/, '');
+    const isPct = core.includes('%');
+    const isMoney = core.includes('₺');
+    const numTxt = core.replace(/[₺%]/g, '').replace(/\./g, '').replace(',', '.');
+    if (!/^\d+(\.\d+)?$/.test(numTxt)) return t;
+    let v = Number(numTxt) * (neg ? -1 : 1);
+    if (isPct) return { v: Math.round(v * 1000) / 100000, s: 'pct' };
+    if (isMoney) return { v, s: 'money' };
+    return { v, s: Number.isInteger(v) ? 'int' : 'num' };
+  }
+  const cellOf = (html, num) => { const t = htmlText(html); return num ? parseCell(t) : (t === '—' ? null : t || null); };
+  const xVal = (v) => (v && typeof v === 'object' ? v : typeof v === 'number' ? { v, s: Number.isInteger(v) ? 'int' : 'num' } : v);
+
+  // table() ile çizilmiş tablo → sayfa
+  function tableSheet(el, name) {
+    const X = el._x;
+    if (!X) return domTableSheet(el, name);
+    const cols = X.cols.filter((c) => !c.noExport && htmlText(c.label) !== '');
+    const head = cols.map((c) => htmlText(c.label));
+    const rows = X.rows.map((r) => cols.map((c) => (c.x ? xVal(c.x(r)) : cellOf(c.render ? c.render(r) : esc(r[c.key]), c.num))));
+    const feet = X.feet.map((f) => cols.map((c) => (f[c.key] === undefined || f[c.key] === null ? null : cellOf(f[c.key], c.num))));
+    if (!rows.length) return null;
+    const all = [head, ...rows, ...feet];
+    return { name, rows: all, boldRows: new Set(feet.map((_, i) => rows.length + 1 + i)), filterEnd: rows.length + 1 };
+  }
+  // Elle yazılmış tablo (ör. karşılaştırma tablosu): iki satırlı başlıklar birleştirilir
+  function domTableSheet(el, name) {
+    const grid = [];
+    const place = (rowEls, offset) => rowEls.forEach((tr, ri) => {
+      const r = offset + ri; grid[r] = grid[r] || [];
+      let c = 0;
+      for (const td of tr.children) {
+        while (grid[r][c] !== undefined) c++;
+        const cs = +td.colSpan || 1; const rs = +td.rowSpan || 1;
+        const txt = htmlText(td.innerHTML);
+        for (let i = 0; i < rs; i++) for (let j = 0; j < cs; j++) { grid[r + i] = grid[r + i] || []; grid[r + i][c + j] = { txt, num: td.classList.contains('num'), head: td.tagName === 'TH', first: i === 0 && j === 0, cs }; }
+        c += cs;
+      }
+    });
+    const hr = [...el.querySelectorAll('thead tr')]; const br = [...el.querySelectorAll('tbody tr')]; const fr = [...el.querySelectorAll('tfoot tr')];
+    place(hr, 0); place(br, hr.length); place(fr, hr.length + br.length);
+    if (!br.length) return null;
+    const ncol = Math.max(...grid.map((r) => r.length));
+    // Başlık: üst grup adı + alt başlık ("Sipariş tutarı 2024")
+    const head = Array.from({ length: ncol }, (_, c) => [...new Set(grid.slice(0, hr.length).map((r) => r[c]?.txt).filter(Boolean))].join(' '));
+    const body = grid.slice(hr.length).map((r) => Array.from({ length: ncol }, (_, c) => (r[c] ? (r[c].num ? parseCell(r[c].txt) : r[c].txt || null) : null)));
+    return { name, rows: [head, ...body], boldRows: new Set(fr.map((_, i) => 1 + br.length + i)), filterEnd: br.length + 1 };
+  }
+  // Grafik → sayfa (dönem × seri)
+  function chartSheet(id, name) {
+    const ch = S.charts[id];
+    if (!ch) return null;
+    const series = ch.groups || ch.series || [];
+    if (!series.length) return null;
+    const money = ch.opts?.money !== false;
+    const st = money ? 'money' : 'int';
+    const stacked = Boolean(ch.groups);
+    const head = ['Dönem', ...series.map((g) => g.label), ...(stacked && series.length > 1 ? ['Toplam'] : [])];
+    const rows = ch.labels.map((lab, i) => {
+      const title = ch.opts?.tooltipTitle ? htmlText(ch.opts.tooltipTitle(i)) : lab;
+      const vals = series.map((g) => (has(g.data[i]) ? { v: r2e(g.data[i]), s: st } : null));
+      return [title, ...vals, ...(stacked && series.length > 1 ? [{ v: r2e(sum(series, (g) => g.data[i] || 0)), s: st }] : [])];
+    });
+    const tot = ['Toplam', ...series.map((g) => ({ v: r2e(sum(g.data, (v) => v || 0)), s: st })), ...(stacked && series.length > 1 ? [{ v: r2e(sum(series, (g) => sum(g.data, (v) => v || 0))), s: st }] : [])];
+    return { name, rows: [head, ...rows, tot], boldRows: new Set([rows.length + 1]), filterEnd: rows.length + 1 };
+  }
+  function donutSheet(el, name) {
+    const X = el._x; if (!X || !X.items.length) return null;
+    const rows = X.items.map((g) => [g.label, { v: r2e(g.value), s: 'money' }, { v: g.value / X.total, s: 'pct' }]);
+    return { name, rows: [['Pazaryeri', 'Ciro', 'Pay'], ...rows, ['Toplam', { v: r2e(X.total), s: 'money' }, { v: 1, s: 'pct' }]], boldRows: new Set([rows.length + 1]), filterEnd: rows.length + 1 };
+  }
+  function heatSheet(el, name) {
+    const X = el._x; if (!X) return null;
+    const head = ['Gün', ...Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)];
+    const rows = X.order.map((g) => [DAYS[g], ...X.avg[g].map((v) => ({ v: Math.round(v * 100) / 100, s: 'num' }))]);
+    return { name: `${name} (ortalama sipariş)`, rows: [head, ...rows], filter: false };
+  }
+  function kpiSheet(view) {
+    const ks = $$(`#view-${view} .kpi`);
+    if (!ks.length) return null;
+    const rows = ks.map((k) => {
+      const v = htmlText($('.v', k).innerHTML);
+      return [htmlText($('.k', k).innerHTML), parseCell(v) ?? v, htmlText($('.d', k).innerHTML)];
+    });
+    return { name: 'Özet', rows: [['Gösterge', 'Değer', 'Açıklama'], ...rows], filter: false };
+  }
+
+  // Bir karttaki tüm veri kaynakları (tablo, grafik, halka, ısı haritası) → sayfalar
+  function cardTitle(card, node) {
+    // Kaynaktan önceki en yakın başlık
+    const heads = [...card.querySelectorAll('h2, h3')].filter((h) => !h.closest('[hidden], .hidden') && (h.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING));
+    const h = heads[heads.length - 1] || card.querySelector('h2');
+    return h ? htmlText(h.innerHTML).replace(/\s*\d{4}\s*$/, (m) => m) : 'Veri';
+  }
+  function cardSheets(card) {
+    const out = [];
+    for (const node of card.querySelectorAll('table, [id].donut-wrap, .heat, .chart-wrap > [id]')) {
+      if (node.closest('.hidden') || node.closest('[hidden]')) continue;
+      const name = cardTitle(card, node);
+      let sh = null;
+      if (node.tagName === 'TABLE') { if (node.closest('#k-import')) continue; sh = tableSheet(node, name); }
+      else if (node.classList.contains('donut-wrap')) sh = donutSheet(node, name);
+      else if (node.classList.contains('heat')) sh = heatSheet(node, name);
+      else sh = chartSheet(node.id, `${name} (grafik)`);
+      if (sh) out.push(sh);
+    }
+    return out;
+  }
+
+  const slug = (s) => String(s).normalize('NFKD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('tr-TR').replace(/ı/g, 'i').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'rapor';
+  function viewPeriod(view) {
+    if (view === 'gunluk') return S.g.start === S.g.end ? S.g.start : `${S.g.start}_${S.g.end}`;
+    if (view === 'aylik') return S.a.month;
+    if (view === 'detay') return `${S.d.start}_${S.d.end}`;
+    if (view === 'iade-iptal') return `${S.r.start}_${S.r.end}`;
+    if (view === 'karsilastirma') return [...(S.k.years || [])].sort().join('-');
+    return todayTR();
+  }
+  function saveWorkbook(sheets, name) {
+    if (!sheets.length) { toast('Aktarılacak veri yok.'); return; }
+    const blob = window.MiniXlsx.writeXlsx(sheets);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${name}.csv`;
+    a.href = URL.createObjectURL(blob); a.download = `${name}.xlsx`;
     document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+  }
+  function precise(fn) {
+    XL.precise = true;
+    try { render(); return fn(); } finally { XL.precise = false; render(); }
+  }
+  function exportCard(card) {
+    const view = card.closest('.view')?.id.replace('view-', '') || 'rapor';
+    const title = htmlText(card.querySelector('h2')?.innerHTML || 'veri');
+    // Kart yeniden çizilince değişebilir: başlığından yeniden bulunur
+    const key = card.id || title;
+    const sheets = precise(() => {
+      const c = card.isConnected ? card : $$(`#view-${view} .card`).find((x) => (x.id || htmlText(x.querySelector('h2')?.innerHTML || '')) === key);
+      return c ? cardSheets(c) : [];
+    });
+    saveWorkbook(sheets, `${slug(title)}-${viewPeriod(view)}`);
+  }
+  const VIEW_NAMES = { gunluk: 'gunluk-rapor', aylik: 'aylik-rapor', detay: 'detayli-rapor', 'iade-iptal': 'iade-iptal', karsilastirma: 'karsilastirma' };
+  function exportView(view) {
+    const sheets = precise(() => {
+      const out = [];
+      const k = kpiSheet(view); if (k) out.push(k);
+      for (const card of $(`#view-${view}`).querySelectorAll('.card')) {
+        if (card.closest('.hidden') || card.classList.contains('hidden') || card.hidden) continue;
+        out.push(...cardSheets(card));
+      }
+      return out;
+    });
+    saveWorkbook(sheets, `${VIEW_NAMES[view] || view}-${viewPeriod(view)}`);
+  }
+
+  // Düğmeler: kart başına "Excel", ekran başına "Tümünü Excel'e aktar"
+  function addCardButton(card) {
+    if (card.querySelector(':scope .xl-btn') || card.id === 'k-import' || card.id === 'k-empty') return;
+    if (!card.querySelector('table, .donut-wrap, .heat, .chart-wrap')) return;
+    if (card.querySelector('[id$="-csv"]')) return; // kendi ayrıntılı indirme düğmesi olan kart
+    const b = document.createElement('button');
+    b.className = 'btn xl-btn'; b.type = 'button'; b.title = 'Bu alanı Excel\'e aktar';
+    b.innerHTML = `${XL_ICON}Excel`;
+    b.addEventListener('click', (e) => { e.stopPropagation(); exportCard(card); });
+    const head = card.querySelector(':scope > .card-head');
+    if (head) {
+      const ctr = head.querySelector(':scope > .controls');
+      if (ctr) ctr.prepend(b); else head.appendChild(b);
+    } else { card.classList.add('has-xl'); card.prepend(b); }
+  }
+  function addExportButtons() {
+    $$('.view .card').forEach(addCardButton);
+    for (const sec of $$('.view')) {
+      const view = sec.id.replace('view-', '');
+      const head = $('.view-head', sec);
+      if (!head || head.querySelector('.xl-all')) continue;
+      let ctr = head.querySelector(':scope > .controls');
+      if (!ctr) { ctr = document.createElement('div'); ctr.className = 'controls'; head.appendChild(ctr); }
+      const b = document.createElement('button');
+      b.className = 'btn primary xl-all'; b.type = 'button';
+      b.innerHTML = `${XL_ICON}Tümünü Excel'e aktar`;
+      b.title = 'Bu ekrandaki tüm alanları tek Excel dosyasında, ayrı sayfalar halinde indir';
+      b.addEventListener('click', () => exportView(view));
+      ctr.appendChild(b);
+    }
+  }
+
+  // ---------- CSV / Excel indirmeleri ----------
+  function download(rows, name, sheet) {
+    const head = rows[0] || [];
+    const kind = head.map((h) => (/tutar|fiyat|ciro|komisyon|ücret|ucret/i.test(String(h)) ? 'money' : /^adet$|sipariş$/i.test(String(h)) ? 'int' : ''));
+    const body = rows.slice(1).map((r) => r.map((v, i) => (typeof v === 'number' && kind[i] ? { v, s: kind[i] } : v === '' ? null : v)));
+    saveWorkbook([{ name: sheet || 'Veri', rows: [head, ...body] }], name);
   }
   const r2 = (n) => Math.round((n || 0) * 100) / 100;
 
@@ -1987,15 +2204,15 @@
       const items = o.items?.length ? saleItems(o) : [{ sku: '', name: '', qty: o.qty, total: o.total }];
       items.forEach((it, i) => rows.push([trDate(o.date), o.time, o.no || o.id, mpLabel(o.mp), it.sku, it.name, it.qty, r2(it.total), i === 0 ? r2(amt(o)) : '']));
     }
-    download(rows, name);
+    download(rows, name, 'Sipariş satırları');
   }
 
   function exportProducts(list, name) {
     const prods = productRows(list);
     const keys = S.mpOrder;
     const rows = [['Stok Kodu', 'Ürün', 'Adet', 'Sipariş', 'Ort. Fiyat', 'Ciro', ...keys.map(mpLabel)]];
-    for (const p of prods) rows.push([p.sku, p.name, p.qty, p.orderCount, r2(p.avgPrice), r2(p.total), ...keys.map((k) => r2(p.mps.get(k) || 0))]);
-    download(rows, name);
+    for (const p of prods) rows.push([p.sku, p.name, p.qty, p.orderCount, r2(p.avgPrice), r2(p.total), ...keys.map((k) => ({ v: r2(p.mps.get(k) || 0), s: 'money' }))]);
+    download(rows, name, 'Ürün özeti');
   }
 
   function exportReturns(list, name) {
@@ -2005,7 +2222,7 @@
       items.forEach((it, i) => rows.push([trDate(o.date), o.changed ? trDate(o.changed) : '', o.no || o.id, mpLabel(o.mp), RET_TYPES[o.sg] || o.sg, o.status, it.sku, it.name, it.qty, r2(it.total),
         i === 0 ? r2(o.total) : '', i === 0 ? r2(retAmt(o)) : '']));
     }
-    download(rows, name);
+    download(rows, name, 'İade ve iptal satırları');
   }
 
   boot();

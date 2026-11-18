@@ -170,5 +170,113 @@
     return out;
   }
 
-  window.MiniXlsx = { readXlsx, parseHistory };
+  // ---- Excel YAZMA (.xlsx) ----
+  // sheets: [{ name, rows: [[hücre, ...], ...], boldRows: Set(satır no), header: true }]
+  // hücre: sayı | metin | null | { v, s: 'money'|'int'|'pct'|'num'|'text', b: kalın }
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  const crc32 = (u8) => { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+
+  function zipStore(files) {
+    const enc = new TextEncoder();
+    const parts = []; const central = []; let off = 0;
+    for (const f of files) {
+      const name = enc.encode(f.name); const data = typeof f.data === 'string' ? enc.encode(f.data) : f.data;
+      const crc = crc32(data);
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+      lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, name.length, true);
+      parts.push(new Uint8Array(lh.buffer), name, data);
+      const ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+      ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, name.length, true); ch.setUint32(42, off, true);
+      central.push(new Uint8Array(ch.buffer), name);
+      off += 30 + name.length + data.length;
+    }
+    const csize = central.reduce((a, b) => a + b.length, 0);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, csize, true); end.setUint32(16, off, true);
+    return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
+
+  const xe = (s) => String(s).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+  const colName = (i) => { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+  // Stil sırası styles.xml'deki cellXfs ile aynı
+  const STYLE = { text: 0, head: 1, money: 2, int: 3, pct: 4, num: 5, btext: 6, bmoney: 7, bint: 8, bpct: 9, bnum: 10 };
+
+  function cellXml(ref, c, boldRow) {
+    if (c === null || c === undefined || c === '') return '';
+    const o = typeof c === 'object' ? c : { v: c };
+    if (o.v === null || o.v === undefined || o.v === '') return '';
+    const bold = o.b || boldRow;
+    if (typeof o.v === 'number' && Number.isFinite(o.v)) {
+      let s = o.s || (Number.isInteger(o.v) ? 'int' : 'num');
+      if (s === 'text') s = 'num';
+      const st = STYLE[(bold ? 'b' : '') + s] ?? STYLE.num;
+      return `<c r="${ref}" s="${st}"><v>${o.v}</v></c>`;
+    }
+    return `<c r="${ref}" t="inlineStr" s="${o.head ? STYLE.head : bold ? STYLE.btext : STYLE.text}"><is><t xml:space="preserve">${xe(o.v)}</t></is></c>`;
+  }
+
+  function sheetXml(sh) {
+    const rows = sh.rows || [];
+    const ncol = Math.max(1, ...rows.map((r) => r.length));
+    const widths = Array.from({ length: ncol }, (_, i) => Math.min(60, Math.max(8, ...rows.map((r) => {
+      const c = r[i]; const v = c && typeof c === 'object' ? c.v : c;
+      if (v === null || v === undefined) return 0;
+      return typeof v === 'number' ? String(Math.round(v)).length + 5 : String(v).length + 2;
+    }))));
+    const body = rows.map((r, ri) => `<row r="${ri + 1}">${r.map((c, ci) => {
+      const head = sh.header !== false && ri === 0;
+      const cc = head ? { v: c && typeof c === 'object' ? c.v : c, head: true } : c;
+      return cellXml(`${colName(ci)}${ri + 1}`, cc, sh.boldRows && sh.boldRows.has(ri));
+    }).join('')}</row>`).join('');
+    const freeze = sh.header !== false && rows.length > 1 ? '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' : '<sheetViews><sheetView workbookViewId="0"/></sheetViews>';
+    const filter = sh.header !== false && rows.length > 1 && sh.filter !== false ? `<autoFilter ref="A1:${colName(ncol - 1)}${sh.filterEnd || rows.length}"/>` : '';
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${freeze}<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${body}</sheetData>${filter}</worksheet>`;
+  }
+
+  function sheetNames(sheets) {
+    const used = new Set();
+    return sheets.map((s, i) => {
+      let n = String(s.name || `Sayfa ${i + 1}`).replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 31) || `Sayfa ${i + 1}`;
+      let k = n; let j = 2;
+      while (used.has(k.toLocaleLowerCase('tr-TR'))) { const suf = ` (${j++})`; k = n.slice(0, 31 - suf.length) + suf; }
+      used.add(k.toLocaleLowerCase('tr-TR'));
+      return k;
+    });
+  }
+
+  function writeXlsx(sheets) {
+    const names = sheetNames(sheets);
+    const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="4"><numFmt numFmtId="164" formatCode="#,##0.00\\ &quot;₺&quot;"/><numFmt numFmtId="165" formatCode="#,##0"/><numFmt numFmtId="166" formatCode="0.0%"/><numFmt numFmtId="167" formatCode="#,##0.0#"/></numFmts>
+<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>
+<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8EEFC"/><bgColor indexed="64"/></patternFill></fill></fills>
+<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FF9AA6B8"/></bottom><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="11">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="167" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyNumberFormat="1"/>
+<xf numFmtId="165" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyNumberFormat="1"/>
+<xf numFmtId="166" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyNumberFormat="1"/>
+<xf numFmtId="167" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyNumberFormat="1"/>
+</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+    const files = [
+      { name: '[Content_Types].xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${names.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>` },
+      { name: '_rels/.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { name: 'xl/workbook.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${names.map((n, i) => `<sheet name="${xe(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>` },
+      { name: 'xl/_rels/workbook.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${names.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${names.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+      { name: 'xl/styles.xml', data: styles },
+      ...sheets.map((sh, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(sh) })),
+    ];
+    return zipStore(files);
+  }
+
+  window.MiniXlsx = { readXlsx, parseHistory, writeXlsx };
 }());
