@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-11-19T04:07:02.054Z",
+  "updatedAt": "2026-11-19T13:25:00.356Z",
   "encrypted": true,
   "months": [
     "2026-10",
@@ -8,8 +8,8 @@
   "lastRun": {
     "start": "2026-11-13",
     "end": "2026-11-19",
-    "fetched": 2581,
-    "added": 272,
-    "updated": 2309
+    "fetched": 2773,
+    "added": 192,
+    "updated": 2581
   }
 }
