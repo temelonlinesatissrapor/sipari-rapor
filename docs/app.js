@@ -1014,7 +1014,7 @@
     $('#a-edit-save').disabled = !np;
     $('#a-edit-bar').hidden = !L.edit;
     $('#a-edit-bar-text').innerHTML = L.edit
-      ? `<b>Düzenleme açık.</b> Adet ya da birim fiyatı değiştirip Enter'a basın. Tutar düşerse fark <b>kısmi iade</b> sayılır. ${np ? `<b>${np}</b> kaydedilmemiş değişiklik var.` : ''} ${gh ? `Kayıt: GitHub (${esc(gh.owner)}/${esc(gh.repo)})` : 'Kayıt: dosya indirilir (GitHub bağlantısı için ⚙)'}`
+      ? `<b>Düzenleme açık.</b> Adet ya da satış fiyatını değiştirip Enter'a basın. Adet değişince satış fiyatı değişmez (varyantlı satışlar için). Satış fiyatı düşerse fark <b>kısmi iade</b> sayılır. ${np ? `<b>${np}</b> kaydedilmemiş değişiklik var.` : ''} ${gh ? `Kayıt: GitHub (${esc(gh.owner)}/${esc(gh.repo)})` : 'Kayıt: dosya indirilir (GitHub bağlantısı için ⚙)'}`
       : '';
     if (!L.edit) { $('#a-gh').hidden = true; $('#a-edit-confirm').hidden = true; }
 
@@ -1029,8 +1029,8 @@
       { key: 'name', label: 'Ürün', sort: true, cls: 'trunc', x: (r) => r.name, render: (r) => `${esc(r.name)} ${mark(r)}${r.sku ? `<br><span style="color:var(--muted);font-size:12px">${esc(r.sku)}</span>` : ''}`, title: (r) => r.name },
       { key: 'skuX', label: 'Stok kodu', exportOnly: true, x: (r) => r.sku || '' },
       { key: 'qty', label: 'Adet', num: true, sort: true, x: (r) => r.qty, render: (r) => (editable(r) ? `<input class="cell-in" type="number" inputmode="numeric" min="0" step="1" data-f="qty" value="${r.qty}" aria-label="Adet">` : `${n0(r.qty)}${r.it?.orig && r.it.orig.qty !== r.qty ? ` <s class="orig">${n0(r.it.orig.qty)}</s>` : ''}`) },
-      { key: 'price', label: 'Satış fiyatı', num: true, sort: true, x: (r) => ({ v: r2e(r.price), s: 'money' }), render: (r) => (editable(r) ? `<input class="cell-in wide" type="number" inputmode="decimal" min="0" step="0.01" data-f="unit" value="${r2e(r.price)}" aria-label="Birim satış fiyatı">` : tl2(r.price)) },
-      { key: 'total', label: 'Tutar', num: true, sort: true, x: (r) => ({ v: r2e(r.total), s: 'money' }), render: (r) => `${tl2(r.total)}${r.it?.orig && Math.abs(r.it.orig.total - r.total) > 0.009 ? `<br><s class="orig">${tl2(r.it.orig.total)}</s>` : ''}` },
+      { key: 'total', label: 'Satış fiyatı', num: true, sort: true, x: (r) => ({ v: r2e(r.total), s: 'money' }), render: (r) => (editable(r) ? `<input class="cell-in wide" type="number" inputmode="decimal" min="0" step="0.01" data-f="total" value="${r2e(r.total)}" aria-label="Satış fiyatı">` : `${tl2(r.total)}${r.it?.orig && Math.abs(r.it.orig.total - r.total) > 0.009 ? `<br><s class="orig">${tl2(r.it.orig.total)}</s>` : ''}`) },
+      { key: 'priceX', label: 'Birim fiyat', exportOnly: true, x: (r) => ({ v: r2e(r.price), s: 'money' }) },
       ...(L.edit ? [{ key: 'x', label: '', noExport: true, render: (r) => (r.it?.orig ? '<button class="icon-btn sm" data-reset title="Orijinal değere dön" aria-label="Orijinal değere dön"><svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a6 6 0 1 0 2-4.5"/><path d="M4 3.5V7h3.5"/></svg></button>' : '') }] : []),
     ], pg.rows, {
       empty: 'Bu ay seçili pazaryerlerinde sipariş yok.',
@@ -1148,12 +1148,15 @@
   }
 
   // Bir satırı düzelt: değer orijinaline eşitse düzeltme kaldırılır
-  function setLineEdit(oid, i, qty, unit) {
+  // Adet ve satış fiyatı (satırın tutarı) birbirinden bağımsızdır:
+  // adet değişince tutar değişmez (ör. 10'lu / 15'li varyantlı satışlar).
+  function setLineEdit(oid, i, qty, lineTotal) {
     const raw = S.rawById.get(String(oid));
     const it = raw?.items?.[i];
     if (!it) return;
     const q = Math.max(0, Math.round(Number(qty)));
-    const total = r2e(q * Math.max(0, Number(unit)));
+    const n = Number(lineTotal);
+    const total = r2e(Number.isFinite(n) ? Math.max(0, n) : it.total);
     const p = S.edits.pending[oid] || { lines: {} };
     const sameAsOrig = q === it.qty && Math.abs(total - it.total) < 0.01;
     if (sameAsOrig) {
@@ -1166,7 +1169,7 @@
   function resetLine(oid, i) {
     const raw = S.rawById.get(String(oid));
     const it = raw?.items?.[i];
-    if (it) setLineEdit(oid, i, it.qty, it.qty ? it.total / it.qty : it.total);
+    if (it) setLineEdit(oid, i, it.qty, it.total);
   }
 
   // ---------- GitHub'a kaydetme ----------
@@ -1303,8 +1306,8 @@
       if (!inp) return;
       const tr = inp.closest('tr');
       const q = tr.querySelector('input[data-f="qty"]').value;
-      const u = tr.querySelector('input[data-f="unit"]').value.replace(',', '.');
-      setLineEdit(tr.dataset.oid, +tr.dataset.i, q, u);
+      const t = tr.querySelector('input[data-f="total"]').value.replace(',', '.');
+      setLineEdit(tr.dataset.oid, +tr.dataset.i, q, t);
     });
     $('#a-list').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-reset]');
