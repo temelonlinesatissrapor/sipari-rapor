@@ -1716,7 +1716,11 @@
       $('#k-year').value = h.year || '';
       const warn = [...h.warnings];
       if (S.historyState === 'unreadable') warn.push('Mevcut gecmis.json dosyası şu anki şifreyle açılamadı; indireceğiniz dosya yalnızca bu yılı içerecek.');
-      if (h.year && S.history.years[h.year]) warn.push(`${h.year} yılı zaten ekli; indireceğiniz dosyada yeni hali kullanılacak.`);
+      if (h.year && S.history.years[h.year]) {
+        const have = Object.keys(S.history.years[h.year].months || {}).map(Number).sort((a, b) => a - b);
+        const add = Object.keys(h.months).map(Number).sort((a, b) => a - b);
+        warn.push(`${h.year} yılı zaten ekli (${have.map((x) => MONTHS[x - 1]).join(', ')}). Bu dosyadaki aylar (${add.map((x) => MONTHS[x - 1]).join(', ')}) güncellenecek; diğer aylar olduğu gibi kalacak.`);
+      }
       msg.innerHTML = (warn.length ? `<div class="k-warn">${warn.map(esc).join('<br>')}</div>` : '') +
         `<p class="sub">${Object.keys(h.months).length} ay, ${Object.keys(h.labels).length} ölçü okundu. Rakamları Excel'inizle kontrol edin:</p>`;
       pastTable($('#k-preview'), h);
@@ -1732,7 +1736,13 @@
     if (!h) return;
     if (!year || year < 2000 || year > 2100) { $('#k-import-msg').insertAdjacentHTML('afterbegin', '<div class="k-err">Yılı yazın (ör. 2024).</div>'); return; }
     const years = S.historyState === 'unreadable' ? {} : { ...(S.history.years || {}) };
-    years[year] = { months: h.months, labels: h.labels, importedAt: new Date().toISOString() };
+    // Aynı yıl daha önce eklendiyse aylar birleştirilir: Excel'deki aylar güncellenir, diğer aylar korunur
+    const prev = years[year];
+    years[year] = {
+      months: { ...(prev?.months || {}), ...h.months },
+      labels: { ...(prev?.labels || {}), ...h.labels },
+      importedAt: new Date().toISOString(),
+    };
     const body = { v: 1, years };
     const out = S.manifest.encrypted ? await encryptJson(body, S.password) : body;
     const blob = new Blob([JSON.stringify(out)], { type: 'application/json' });

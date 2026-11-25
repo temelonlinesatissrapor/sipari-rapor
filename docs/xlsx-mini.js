@@ -151,13 +151,22 @@
           const mk = onlyCount ? key : (vc.isCount ? `${key}Cnt` : key);
           if (out.labels[mk]) return; // aynı türden ikinci sütun: ilkini kullan
           out.labels[mk] = onlyCount ? base : vc.isCount ? `${base} (adet)` : valueCols.length > 1 ? `${base} (tutar)` : base;
-          // Aylar: başlığın altındaki satırlar, sırayla 1..12 (etikette yazım hatası olsa da sıra esas alınır)
-          let m = 0;
-          for (let k = r + 1; k < grid.length && m < 12; k++) {
+          // Aylar: satırdaki ay adı esas alınır (yalnızca "Ekim" satırı olan bir dosya da olur).
+          // Aynı ay adı ikinci kez geçerse (yazım hatası) satırın sırasındaki ay kullanılır.
+          let pos = 0;
+          const used = new Set();
+          for (let k = r + 1; k < grid.length && pos < 12; k++) {
             const lab = cell(k, c);
             if (isTotal(lab) || !monthOf(lab)) break;
-            m++;
-            if (monthOf(lab) !== m && i === 0) out.warnings.push(`"${String(head).trim()}" bölümünde ${m}. ay satırı "${String(lab).trim()}" yazıyor; ${m}. ay olarak okundu.`);
+            pos++;
+            let m = monthOf(lab);
+            if (used.has(m)) {
+              const prev = m;
+              m = pos;
+              if (used.has(m)) { for (m = 1; m <= 12 && used.has(m); m++); }
+              if (i === 0) out.warnings.push(`"${String(head).trim()}" bölümünde "${String(lab).trim()}" satırı ikinci kez geçiyor; ${m}. ay olarak okundu.`);
+            }
+            used.add(m);
             const val = cell(k, vc.v);
             if (typeof val !== 'number') continue;
             out.months[m] = out.months[m] || {};
