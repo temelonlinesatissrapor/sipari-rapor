@@ -139,10 +139,15 @@
             if (typeof sub === 'string' && sub.trim() && !/^(para|adet|tl|tutar)$/.test(norm(sub))) break;
             continue;
           }
+          const labeled = typeof sub === 'string' && /^(para|adet|tl|tutar)$/.test(norm(sub));
           const isCount = (typeof sub === 'string' && /adet/.test(norm(sub))) || Boolean(def?.count);
-          valueCols.push({ v, isCount });
+          valueCols.push({ v, isCount, labeled });
         }
         if (!valueCols.length) continue;
+        // Alt başlık ("Para" / "Adet") yoksa: ilk sütun tutar, yanındaki sütun(lar) adet sayılır
+        if (valueCols.length > 1 && !def?.count && !valueCols.some((x) => x.labeled)) {
+          valueCols.forEach((x, i) => { x.isCount = i > 0; });
+        }
         // Yıl: başlıktaki sayı (ör. 2024)
         for (let v = c + 1; v < c + 3; v++) { const y = cell(r, v); if (typeof y === 'number' && y > 1990 && y < 2100) out.year = out.year || y; }
         const onlyCount = valueCols.every((x) => x.isCount);
