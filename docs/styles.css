@@ -360,3 +360,4 @@ s.orig { color: var(--muted); font-size: 11.5px; }
 .xl-btn .ico { width: 15px; height: 15px; color: #1d7a45; }
 .btn.xl-all .ico { color: inherit; }
 @media (max-width: 640px) { .card.has-xl > .xl-btn { position: static; margin-bottom: 8px; } .card.has-xl > h2, .card.has-xl > .sub { padding-right: 0; } }
+.card-head > div:first-child { flex: 1 1 320px; min-width: 0; }

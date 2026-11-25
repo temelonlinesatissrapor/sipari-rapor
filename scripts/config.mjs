@@ -14,6 +14,11 @@ export const ENTEGRA = {
 // sonradan değiştiği için son birkaç gün yeniden çekilip güncellenir.
 export const DEFAULT_LOOKBACK_DAYS = Number(process.env.LOOKBACK_DAYS || 7);
 
+// Entegra'dan HİÇ çekilmeyecek aylar (YYYY-AA). Bu aylar yalnızca elle yüklenen Excel özetinden gelir.
+// Bu aylara ait daha önce çekilmiş sipariş dosyaları da bir sonraki çalışmada silinir.
+// Bir ayı tekrar Entegra'dan almak isterseniz listeden çıkarın.
+export const SKIP_MONTHS = ['2026-10'];
+
 // Raporlarda kullanılan saat dilimi
 export const TIMEZONE = 'Europe/Istanbul';
 

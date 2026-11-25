@@ -8,8 +8,9 @@
 //   START_DATE, END_DATE             (isteğe bağlı) YYYY-MM-DD; boşsa son LOOKBACK_DAYS gün
 //   LOOKBACK_DAYS                    (isteğe bağlı) varsayılan 7
 import path from 'node:path';
+import { existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { ENTEGRA, DEFAULT_LOOKBACK_DAYS, TIMEZONE, FIELDS } from './config.mjs';
+import { ENTEGRA, DEFAULT_LOOKBACK_DAYS, TIMEZONE, FIELDS, SKIP_MONTHS } from './config.mjs';
 import { normalizeOrder, extractList, pick, parseDate } from './lib/normalize.mjs';
 import { Store } from './lib/store.mjs';
 import { writeUsers } from './lib/users.mjs';
@@ -159,6 +160,13 @@ async function main() {
   const userCount = await writeUsers(DATA_DIR, process.env.DASHBOARD_USERS || '', dashPass, log);
   log(userCount ? `Kullanıcı listesi güncellendi: ${userCount} kullanıcı.` : 'Kullanıcı listesi tanımlı değil: rapor şifresiyle giriş yapılır.');
 
+  // Hariç tutulan aylar: daha önce çekilmiş dosyaları silinir, yeniden çekilmez
+  const skip = new Set(SKIP_MONTHS || []);
+  for (const m of skip) {
+    const f = path.join(DATA_DIR, `${m}.json`);
+    if (existsSync(f)) { unlinkSync(f); log(`${m} hariç tutulan ay: daha önce çekilen siparişleri silindi (bu ay Excel özetinden gelir).`); }
+  }
+
   const end = isYmd(env('END_DATE')) ? env('END_DATE') : todayTR();
   const start = isYmd(env('START_DATE')) ? env('START_DATE') : addDays(end, -(DEFAULT_LOOKBACK_DAYS - 1));
   if (start > end) throw new Error(`Başlangıç (${start}) bitişten (${end}) sonra olamaz.`);
@@ -172,7 +180,18 @@ async function main() {
   let added = 0;
   let updated = 0;
   let fetched = 0;
-  const parts = chunks(start, end);
+  const skipped = new Set();
+  const parts = chunks(start, end).filter(([s]) => {
+    if (!skip.has(s.slice(0, 7))) return true;
+    if (!skipped.has(s.slice(0, 7))) log(`▸ ${s.slice(0, 7)} hariç tutulan ay, atlandı.`);
+    skipped.add(s.slice(0, 7));
+    return false;
+  });
+  if (!parts.length) {
+    await new Store(DATA_DIR, dashPass).writeManifest({ lastRun: { start, end, fetched: 0, added: 0, updated: 0 } });
+    log('Çekilecek ay kalmadı (seçilen aralık tamamen hariç tutulan aylarda).');
+    return;
+  }
 
   // Her ay bittiğinde hemen kaydedilir: iş yarıda kesilse bile o ana kadar çekilenler kaybolmaz.
   for (const [i, [s, e]] of parts.entries()) {

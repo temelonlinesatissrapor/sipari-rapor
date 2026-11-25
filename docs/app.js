@@ -114,7 +114,8 @@
   }
 
   async function loadMonths(password) {
-    const files = await Promise.all(S.manifest.months.map((m) => getJson(`data/${m}.json`)));
+    // Bir ay dosyası bulunamazsa (ör. silinmiş) atlanır; diğer aylar yüklenmeye devam eder
+    const files = await Promise.all(S.manifest.months.map((m) => getJson(`data/${m}.json`).catch(() => ({ orders: [] }))));
     const out = [];
     S.unreadable = [];
     for (const [i, f] of files.entries()) {
@@ -888,6 +889,7 @@
     ];
     if (isCurrent && elapsed > 2) kp.push({ k: 'Ay sonu tahmini', v: tl((s.total / elapsed) * dim), d: 'bugünkü hıza göre' });
     $('#a-kpis').innerHTML = kpiHtml(kp);
+    renderMonthExcel(m, list);
 
     // Pazaryeri tablosu
     const byMp = groupBy(list, (o) => o.mp);
@@ -946,6 +948,28 @@
     const yg = seriesBy(yList, months, (o) => o.date.slice(0, 7), 'total');
     legend($('#a-year-legend'), yg);
     stackedBar('a-year', months.map((x) => `${MONTHS[+x.slice(5, 7) - 1].slice(0, 3)} ${x.slice(2, 4)}`), yg, { tooltipTitle: (i) => trMonth(months[i]) });
+  }
+
+  // Bu ay için Excel özeti yüklendiyse rakamlarını ayrı bir kutuda göster (Entegra rakamlarıyla yan yana)
+  function renderMonthExcel(m, list) {
+    const box = $('#a-excel');
+    const ex = S.history?.years?.[+m.slice(0, 4)]?.months?.[+m.slice(5, 7)];
+    box.classList.toggle('hidden', !ex);
+    if (!ex) { box.innerHTML = ''; return; }
+    const ent = liveYear(+m.slice(0, 4))[+m.slice(5, 7)];
+    const rows = COMP.map((mt) => ({ mt, x: mt.past(ex), e: ent ? mt.cur(ent) : null })).filter((r) => has(r.x));
+    const f = (mt, v) => (has(v) ? (mt.money ? tl(v) : n0(v)) : '—');
+    box.innerHTML = `<div class="card-head"><div><h2>Excel özetiniz · ${trMonth(m)}</h2>
+      <p class="sub">Bu ay için yüklediğiniz özet (elle yaptığınız iade/iptal düzeltmeleri dahil). Karşılaştırma ekranı bu ay için bu rakamları kullanır. Aşağıdaki kartlar ve tablolar Entegra'dan çekilen ${n0(list.length)} siparişi gösterir.</p></div></div>
+      <div class="table-scroll"><table id="a-excel-t"></table></div>`;
+    table($('#a-excel-t'), [
+      { key: 'l', label: 'Ölçü', render: (r) => r.mt.label },
+      { key: 'x', label: 'Excel özetiniz', num: true, render: (r) => `<b>${f(r.mt, r.x)}</b>` },
+      { key: 'e', label: 'Entegra verisi', num: true, render: (r) => `<span style="color:var(--muted)">${f(r.mt, r.e)}${ent?.partial ? ' *' : ''}</span>` },
+      { key: 'd', label: 'Fark', num: true, render: (r) => (has(r.x) && has(r.e) ? f(r.mt, r.x - r.e) : '—') },
+    ], rows);
+    if (ent?.partial) box.insertAdjacentHTML('beforeend', `<p class="sub" style="margin:10px 0 0">* Entegra'dan bu ayın yalnızca ${ent.days} günü çekilmiş.</p>`);
+    addCardButton(box);
   }
 
   // Aylık sipariş listesi: her ürün satırı ayrı satır (iade/iptal hariç, kısmi iadede dönen ürünler hariç)
@@ -1612,6 +1636,7 @@
     '<b>Net satış</b>: satış tutarından iade ve iptaller (geçmiş yılda tedarik iptali de) düşülmüş hali; bu yıl diğer ekranlardaki ciroyla aynıdır.',
     '<b>Fatura / sipariş adedi</b>: geçmiş yılda kesilen fatura adedi; bu yıl iptal edilmeyen sipariş adedi.',
     '<b>İptal</b>: geçmiş yılda tedarik iptali dahil. <b>İade adedi</b>: bu yıl iade ve kısmi iade olan sipariş sayısı.',
+    '<b>Kaynak önceliği</b>: bir ay için Excel özeti yüklendiyse, o ay Entegra verisi olsa bile Excel\'deki rakamlar kullanılır.',
   ];
 
   // Canlı siparişlerden yılın aylık özeti
@@ -1643,14 +1668,14 @@
   const liveYears = () => [...new Set(S.dates.map((d) => +d.slice(0, 4)))];
   const histYears = () => Object.keys(S.history?.years || {}).map(Number);
   // Bir yılın ölçü değeri: sipariş verisi varsa canlıdan, yoksa Excel'den
-  // Her ay için kaynak seçilir: tamamlanmış Entegra ayı > Excel ayı > devam eden Entegra ayı
+  // Her ay için kaynak seçilir: elle yüklenen Excel ayı > Entegra ayı
+  // (Excel'deki rakamlar elle yapılan iade/iptal düzeltmelerini içerebileceği için önceliklidir.)
   function yearSource(year) {
     const live = liveYears().includes(year) ? liveYear(year) : {};
     const ex = S.history.years[year]?.months || {};
     const months = {};
     for (let m = 1; m <= 12; m++) {
-      if (live[m] && !live[m].partial) months[m] = { kind: 'live', row: live[m] };
-      else if (ex[m]) months[m] = { kind: 'excel', row: ex[m] };
+      if (ex[m]) months[m] = { kind: 'excel', row: ex[m] };
       else if (live[m]) months[m] = { kind: 'live', row: live[m] };
     }
     const kinds = new Set(Object.values(months).map((x) => x.kind));
