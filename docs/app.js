@@ -87,7 +87,7 @@
     a: { month: null, list: { month: null, mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 }, src: [], edit: false } },
     edits: { saved: { v: 1, orders: {}, savedAt: '' }, pending: {}, state: 'none' },
     d: { start: null, end: null, preset: '30', mps: null, status: '', q: '', gran: 'auto', metric: 'total', page: 0, sort: { k: 'date', dir: -1 }, psort: { k: 'total', dir: -1 } },
-    k: { years: null, pastYear: null, metric: 'sales', month: null, parsed: null },
+    k: { years: null, pastYear: null, metric: 'sales', month: null, parsed: null, real: store.get('k-real') === '1' },
     r: { start: null, end: null, preset: '30', datetype: 'order', type: '', mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 } },
   };
 
@@ -190,7 +190,7 @@
 
   async function openWith(pass, name) {
     const orders = await loadMonths(pass);
-    await loadHistory(pass);
+    await Promise.all([loadHistory(pass), loadCpi()]);
     S.password = pass;
     S.userName = name || '';
     // Ham veri saklanır; elle düzeltmeler her seferinde bunun kopyasına uygulanır
@@ -1606,6 +1606,39 @@
     return { v: 1, alg: 'AES-GCM/PBKDF2-SHA256', iterations: 250000, salt: b64(salt), iv: b64(iv), data: b64(new Uint8Array(data)) };
   }
 
+  // ---------- Enflasyon (TÜİK TÜFE) ----------
+  // Yerleşik aylık oranlar; docs/data/enflasyon.json varsa onunla güncellenir.
+  const TUFE_BUILTIN = {
+    '2024-01': 6.70, '2024-02': 4.53, '2024-03': 3.16, '2024-04': 3.18, '2024-05': 3.37, '2024-06': 1.64,
+    '2024-07': 3.23, '2024-08': 2.47, '2024-09': 2.97, '2024-10': 2.88, '2024-11': 2.24, '2024-12': 1.03,
+    '2025-01': 5.03, '2025-02': 2.27, '2025-03': 2.46, '2025-04': 3.00, '2025-05': 1.53, '2025-06': 1.37,
+    '2025-07': 2.06, '2025-08': 2.04, '2025-09': 3.23, '2025-10': 2.55, '2025-11': 0.87, '2025-12': 0.89,
+    '2026-01': 4.84, '2026-02': 2.96, '2026-03': 1.94, '2026-04': 4.18, '2026-05': 1.71, '2026-06': 0.99,
+    '2026-07': 1.78, '2026-08': 1.84, '2026-09': 1.84, '2026-10': 2.58,
+  };
+  async function loadCpi() {
+    let rates = { ...TUFE_BUILTIN };
+    try {
+      const f = await getJson('data/enflasyon.json');
+      for (const [k, x] of Object.entries(f?.aylik || {})) if (/^\d{4}-\d{2}$/.test(k) && Number.isFinite(+x)) rates[k] = +x;
+    } catch { /* yerleşik oranlar */ }
+    // Zincirleme endeks: ilk ayın öncesi = 100
+    const keys = Object.keys(rates).sort();
+    const idx = {};
+    let cur = 100;
+    for (const k of keys) { cur *= 1 + rates[k] / 100; idx[k] = cur; }
+    S.cpi = { idx, first: keys[0], last: keys[keys.length - 1] };
+  }
+  // Bir ayın tutarını son açıklanan ayın fiyatlarına taşıyan çarpan
+  function cpiFactor(y, m) {
+    const c = S.cpi;
+    if (!c) return 1;
+    const ym = `${y}-${String(m).padStart(2, '0')}`;
+    if (ym >= c.last) return 1;            // son açıklanan ay ve sonrası: zaten bugünün fiyatı
+    if (ym < c.first) return null;         // verisi olmayan eski ay
+    return c.idx[c.last] / c.idx[ym];
+  }
+
   async function loadHistory(pass) {
     S.history = { years: {} };
     S.historyState = 'none';
@@ -1626,6 +1659,8 @@
     { k: 'sales', label: 'Satış tutarı', money: true, past: (m) => m.sales, cur: (a) => a.gross },
     { k: 'net', label: 'Net satış', money: true, past: (m) => (has(m.sales) ? m.sales - (m.return || 0) - (m.cancel || 0) - (m.supplyCancel || 0) : null), cur: (a) => a.net },
     { k: 'units', label: 'Satılan ürün adedi', past: (m) => m.units, cur: (a) => a.units },
+    // Oran: toplamlarda ay ortalaması değil, toplam tutar ÷ toplam adet kullanılır
+    { k: 'avgUnit', label: 'Ürün başına ortalama tutar', money: true, dec: true, ratio: ['sales', 'units'], past: (m) => (has(m.sales) && m.units ? m.sales / m.units : null), cur: (a) => (a.units ? a.gross / a.units : null) },
     { k: 'orders', label: 'Fatura / sipariş adedi', past: (m) => m.invoiceCnt, cur: (a) => a.orders },
     { k: 'return', label: 'İade tutarı', money: true, past: (m) => m.return, cur: (a) => a.returnAmt },
     { k: 'returnCnt', label: 'İade adedi', past: (m) => m.returnCnt, cur: (a) => a.returnCnt },
@@ -1637,6 +1672,7 @@
   const COMP_NOTES = [
     '<b>Satış tutarı</b>: geçmiş yılda Excel\'deki satış tutarı; bu yıl iade ve iptaller dahil tüm siparişlerin tutarı.',
     '<b>Net satış</b>: satış tutarından iade ve iptaller (geçmiş yılda tedarik iptali de) düşülmüş hali; bu yıl diğer ekranlardaki ciroyla aynıdır.',
+    '<b>Ürün başına ortalama tutar</b>: sipariş tutarı ÷ satılan ürün adedi. Toplam satırlarında aylık ortalamaların ortalaması değil, toplam tutar ÷ toplam adet kullanılır.',
     '<b>Fatura / sipariş adedi</b>: geçmiş yılda kesilen fatura adedi; bu yıl iptal edilmeyen sipariş adedi.',
     '<b>İptal</b>: geçmiş yılda tedarik iptali dahil. <b>İade adedi</b>: bu yıl iade ve kısmi iade olan sipariş sayısı.',
     '<b>Kaynak önceliği</b>: bir ay için Excel özeti yüklendiyse, o ay Entegra verisi olsa bile Excel\'deki rakamlar kullanılır.',
@@ -1792,6 +1828,9 @@
     const years = all.filter((y) => S.k.years.has(y));
     const color = (y) => css(YEAR_COLORS[(all.length - 1 - all.indexOf(y)) % YEAR_COLORS.length]);
     const tag = (y) => (hy.includes(y) && ly.includes(y) ? 'Excel + Entegra' : hy.includes(y) ? 'Excel' : 'Entegra');
+    const lastLbl = S.cpi ? `${MONTHS[+S.cpi.last.slice(5) - 1]} ${S.cpi.last.slice(0, 4)}` : '';
+    $('#k-real').innerHTML = S.cpi ? `<button class="chip" data-r="0" aria-pressed="${!S.k.real}">Nominal</button><button class="chip" data-r="1" aria-pressed="${Boolean(S.k.real)}" title="Tüm tutarlar ${lastLbl} fiyatlarına çevrilir (TÜİK TÜFE)">Enflasyondan arındırılmış</button>` : '';
+    $$('#k-real .chip').forEach((c) => c.addEventListener('click', () => { S.k.real = c.dataset.r === '1'; try { store.set('k-real', S.k.real ? '1' : '0'); } catch { /* yok say */ } renderCompare(); }));
     $('#k-years').innerHTML = all.map((y) => `<button class="chip" data-y="${y}" aria-pressed="${S.k.years.has(y)}" title="${tag(y)}"><span class="sw" style="background:${color(y)}"></span>${y}</button>`).join('');
     $$('#k-years .chip').forEach((c) => c.addEventListener('click', () => {
       const y = +c.dataset.y;
@@ -1801,16 +1840,31 @@
 
     const src = new Map(years.map((y) => [y, yearSource(y)]));
     const ms = Array.from({ length: 12 }, (_, i) => i + 1);
-    const v = (y, m, mt) => val(src.get(y), m, mt);
+    const real = Boolean(S.k.real && S.cpi);
+    // Enflasyondan arındırma: para ölçüleri son açıklanan ayın fiyatlarına taşınır (adetler değişmez)
+    const v = (y, m, mt) => {
+      const x = val(src.get(y), m, mt);
+      if (x === null || !real || !mt.money) return x;
+      const f = cpiFactor(y, m);
+      return f === null ? null : x * f;
+    };
     const isPartial = (y, m) => partialOf(src.get(y), m);
     const anyPartial = (m) => years.some((y) => isPartial(y, m));
     const mark = (m) => (anyPartial(m) ? '*' : '');
     const prevOf = (y) => years[years.indexOf(y) - 1];
 
     // Ortak hesaplar: yıl toplamı, ortak (hepsinde tamamlanmış) aylar
+    // Oran ölçülerinde toplam = pay ölçüsünün toplamı ÷ payda ölçüsünün toplamı
+    const aggOf = (y, mm, x) => {
+      if (!x.ratio) return sum(mm, (m) => v(y, m, x));
+      const [a, b] = x.ratio.map((k) => COMP.find((c) => c.k === k));
+      const den = sum(mm, (m) => v(y, m, b));
+      return den ? sum(mm, (m) => v(y, m, a)) / den : null;
+    };
+    const fmtOf = (x) => (x.dec ? tl2 : x.money ? tl : n0);
     const yearTotal = (y, x) => {
       const mm = ms.filter((m) => v(y, m, x) !== null);
-      return { total: sum(mm, (m) => v(y, m, x)), n: mm.length, partial: mm.some((m) => isPartial(y, m)) };
+      return { total: aggOf(y, mm, x), n: mm.length, partial: mm.some((m) => isPartial(y, m)) };
     };
     const commonOf = (x) => ms.filter((m) => years.every((y) => v(y, m, x) !== null) && !anyPartial(m));
     const shortRange = (c) => (c.length === 1 ? MONTHS[c[0] - 1] : `${MONTHS[c[0] - 1].slice(0, 3)}–${MONTHS[c[c.length - 1] - 1].slice(0, 3)}`);
@@ -1821,18 +1875,18 @@
     };
     // Alt satırlar: yıl toplamı, ortak aylar toplamı ve bir önceki yıla göre değişim
     function totalRows(x, keyOf, deltaKeyOf) {
-      const f = x.money ? tl : n0;
-      const r1 = { m: 'Yıl toplamı' };
+      const f = fmtOf(x);
+      const r1 = { m: x.ratio ? 'Yıl geneli' : 'Yıl toplamı' };
       years.forEach((y) => { const t = yearTotal(y, x); r1[keyOf(y)] = t.n ? `${f(t.total)}<small>${t.n} ay${t.partial ? ' *' : ''}</small>` : '—'; });
       const c = commonOf(x);
       if (!c.length || years.length < 2) return [r1];
       const r2 = { m: `Ortak ${c.length} ay <small>${shortRange(c)}</small>` };
       const r3 = { m: 'Değişim <small>ortak aylarda, önceki yıla göre</small>' };
       years.forEach((y, i) => {
-        const t = sum(c, (m) => v(y, m, x));
+        const t = aggOf(y, c, x);
         r2[keyOf(y)] = f(t);
         if (i > 0) {
-          const d = delta(t, sum(c, (m) => v(years[i - 1], m, x))) || '—';
+          const d = delta(t, aggOf(years[i - 1], c, x)) || '—';
           if (deltaKeyOf) r2[deltaKeyOf(y)] = d; else r3[keyOf(y)] = d;
         }
       });
@@ -1844,9 +1898,10 @@
       { k: 'sales', title: 'Sipariş tutarı' },
       { k: 'units', title: 'Satılan ürün adedi' },
       { k: 'orders', title: 'Fatura adedi' },
+      { k: 'avgUnit', title: 'Ürün başına ortalama tutar' },
     ].map((g) => ({ ...g, mt: COMP.find((x) => x.k === g.k) })).filter((g) => years.some((y) => ms.some((m) => v(y, m, g.mt) !== null)));
     const swY = (y) => `<span class="sw" style="background:${color(y)}"></span>`;
-    const cellV = (g, y, m) => { const x = v(y, m, g.mt); return x === null ? '—' : `<span class="${isPartial(y, m) ? 'partial' : ''}">${(g.mt.money ? tl : n0)(x)}</span>`; };
+    const cellV = (g, y, m) => { const x = v(y, m, g.mt); return x === null ? '—' : `<span class="${isPartial(y, m) ? 'partial' : ''}">${fmtOf(g.mt)(x)}</span>`; };
     const mrows = ms.filter((m) => GROUPS.some((g) => years.some((y) => v(y, m, g.mt) !== null)));
     const footRows = GROUPS.map((g) => totalRows(g.mt, (y) => y));
     const nFoot = Math.max(...footRows.map((r) => r.length));
@@ -1857,8 +1912,8 @@
     const tbody = `<tbody>${mrows.map((m) => `<tr><td>${MONTHS[m - 1]}${mark(m)}</td>${GROUPS.map((g, gi) => years.map((y, yi) => `<td class="num${gi && !yi ? ' gsep' : ''}">${cellV(g, y, m)}</td>`).join('')).join('')}</tr>`).join('')}</tbody>`;
     const tfoot = `<tfoot>${Array.from({ length: nFoot }, (_, ri) => `<tr><td>${footLabels[ri]?.m || ''}</td>${GROUPS.map((g, gi) => years.map((y, yi) => `<td class="num${gi && !yi ? ' gsep' : ''}">${footRows[gi][ri]?.[y] ?? ''}</td>`).join('')).join('')}</tr>`).join('')}</tfoot>`;
     $('#k-panels').innerHTML = GROUPS.length ? `<div class="card k-combined">
-      <h2>Sipariş tutarı · Satılan ürün adedi · Fatura adedi</h2>
-      <p class="sub">${years.join(' · ')} · ay ay · altta yıl toplamları, ortak ayların toplamı ve önceki yıla göre değişim</p>
+      <h2>Sipariş tutarı · Satılan ürün adedi · Fatura adedi · Ürün başına ortalama tutar</h2>
+      <p class="sub">${years.join(' · ')} · ay ay${real ? ` · <b>tutarlar ${lastLbl} fiyatlarıyla (enflasyondan arındırılmış)</b>` : ''} · altta yıl toplamları, ortak ayların toplamı ve önceki yıla göre değişim</p>
       <div class="table-scroll"><table id="k-combined">${thead}${tbody}${tfoot}</table></div></div>` : '';
     const kc = $('#k-panels .card'); if (kc) addCardButton(kc);
 
@@ -1869,12 +1924,12 @@
     $('#k-metrics').innerHTML = metrics.map((x) => `<button class="chip metric" data-k="${x.k}" aria-pressed="${x.k === S.k.metric}">${x.label}</button>`).join('');
     $$('#k-metrics .chip').forEach((c) => c.addEventListener('click', () => { S.k.metric = c.dataset.k; renderCompare(); }));
     if (!mt) return;
-    const fmt = mt.money ? tl : n0;
+    const fmt = fmtOf(mt);
 
     // Ortak aylar: seçili yılların HEPSİNDE değeri olan ve hiçbirinde devam etmeyen aylar
     const common = ms.filter((m) => years.every((y) => v(y, m, mt) !== null) && !anyPartial(m));
     const range = common.length ? (common.length === 1 ? MONTHS[common[0] - 1] : `${MONTHS[common[0] - 1]}–${MONTHS[common[common.length - 1] - 1]} (${common.length} ay)`) : '';
-    const tot = (y) => sum(common, (m) => v(y, m, mt));
+    const tot = (y) => aggOf(y, common, mt);
     const kp = years.slice().reverse().map((y) => {
       const p = prevOf(y);
       return {
@@ -1886,7 +1941,7 @@
     // Devam eden ay için ay sonu tahmini (en yeni yıl, bir önceki seçili yılın aynı ayına göre)
     const last = years[years.length - 1]; const prev = prevOf(last);
     const curM = ms.find((m) => isPartial(last, m) && `${last}-${String(m).padStart(2, '0')}` === todayTR().slice(0, 7));
-    if (curM && prev && v(prev, curM, mt) !== null && !isPartial(prev, curM)) {
+    if (curM && prev && !mt.ratio && v(prev, curM, mt) !== null && !isPartial(prev, curM)) {
       const r = src.get(last).months[curM].row;
       const proj = (v(last, curM, mt) / r.days) * r.dim;
       kp.push({ k: `${MONTHS[curM - 1]} ${last} ay sonu tahmini`, v: fmt(proj), d: `${delta(proj, v(prev, curM, mt))} ${MONTHS[curM - 1]} ${prev}'e göre · ${r.days}/${r.dim} gün` });
@@ -1925,7 +1980,7 @@
     const sm = S.k.month;
     const scols = [{ key: 'l', label: 'Ölçü', render: (r) => r.mt.label }];
     years.forEach((y, i) => {
-      scols.push({ key: `y${y}`, label: `${y}${isPartial(y, sm) ? '*' : ''}`, num: true, render: (r) => (r[y] !== null ? (r.mt.money ? tl(r[y]) : n0(r[y])) : '—') });
+      scols.push({ key: `y${y}`, label: `${y}${isPartial(y, sm) ? '*' : ''}`, num: true, render: (r) => (r[y] !== null ? fmtOf(r.mt)(r[y]) : '—') });
       if (i > 0) { const p = years[i - 1]; scols.push({ key: `d${y}`, label: 'Değişim', num: true, render: (r) => (r[y] !== null && r[p] !== null ? delta(r[y], r[p]) || '—' : '—') }); }
     });
     table($('#k-summary'), scols, metrics.map((x) => Object.assign({ mt: x }, Object.fromEntries(years.map((y) => [y, v(y, sm, x)])))));
@@ -1947,6 +2002,7 @@
 
     $('#k-sub').textContent = years.map((y) => `${y} (${tag(y)})`).join(' · ');
     $('#k-notes').innerHTML = [...COMP_NOTES,
+      S.cpi ? `<b>Enflasyondan arındırılmış</b>: her ayın tutarı, TÜİK TÜFE ile ${lastLbl} fiyatlarına çevrilir (ör. 2024 Ocak'taki 100 ₺ ≈ ${tl(100 * (cpiFactor(2024, 1) || 1))}). Böylece değişim yüzdeleri <b>reel</b> büyümeyi gösterir. Adetler etkilenmez. TÜFE oranları <b>docs/data/enflasyon.json</b> dosyasından okunur; her ay yeni oranı bu dosyaya ekleyin. ${lastLbl} sonrasındaki aylar düzeltilmeden gösterilir.` : '',
       'Toplamlar ve özet kartlar yalnızca seçili yılların <b>hepsinde</b> tamamlanmış olan ayları içerir.',
       ms.some(anyPartial) ? '* İşaretli aylarda en az bir yılın verisi tamamlanmadı (ay devam ediyor ya da o ayın başından itibaren sipariş çekilmedi).' : ''].filter(Boolean).join('<br>');
   }
