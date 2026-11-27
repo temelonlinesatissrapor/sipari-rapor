@@ -310,6 +310,7 @@ td.partial, span.partial { color: var(--muted); }
 .k-combined th.grp { text-align: center; color: var(--ink); font-size: 12px; border-bottom: 1px solid var(--grid); }
 .k-combined .gsep { border-left: 1px solid var(--axis); padding-left: 12px; }
 .k-combined thead th { position: static; }
+.k-combined .per { display: inline-block; min-width: 52px; margin-left: 8px; color: var(--muted); font-size: 12px; font-weight: 400; text-align: right; }
 
 @media (max-width: 640px) {
   .view-head h1 { font-size: 19px; }

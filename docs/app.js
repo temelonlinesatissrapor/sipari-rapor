@@ -87,7 +87,7 @@
     a: { month: null, list: { month: null, mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 }, src: [], edit: false } },
     edits: { saved: { v: 1, orders: {}, savedAt: '' }, pending: {}, state: 'none' },
     d: { start: null, end: null, preset: '30', mps: null, status: '', q: '', gran: 'auto', metric: 'total', page: 0, sort: { k: 'date', dir: -1 }, psort: { k: 'total', dir: -1 } },
-    k: { years: null, pastYear: null, metric: 'sales', month: null, parsed: null, real: store.get('k-real') === '1' },
+    k: { years: null, pastYear: null, metric: 'sales', month: null, parsed: null },
     r: { start: null, end: null, preset: '30', datetype: 'order', type: '', mps: null, q: '', page: 0, sort: { k: 'date', dir: -1 } },
   };
 
@@ -190,7 +190,7 @@
 
   async function openWith(pass, name) {
     const orders = await loadMonths(pass);
-    await Promise.all([loadHistory(pass), loadCpi()]);
+    await loadHistory(pass);
     S.password = pass;
     S.userName = name || '';
     // Ham veri saklanır; elle düzeltmeler her seferinde bunun kopyasına uygulanır
@@ -1606,39 +1606,6 @@
     return { v: 1, alg: 'AES-GCM/PBKDF2-SHA256', iterations: 250000, salt: b64(salt), iv: b64(iv), data: b64(new Uint8Array(data)) };
   }
 
-  // ---------- Enflasyon (TÜİK TÜFE) ----------
-  // Yerleşik aylık oranlar; docs/data/enflasyon.json varsa onunla güncellenir.
-  const TUFE_BUILTIN = {
-    '2024-01': 6.70, '2024-02': 4.53, '2024-03': 3.16, '2024-04': 3.18, '2024-05': 3.37, '2024-06': 1.64,
-    '2024-07': 3.23, '2024-08': 2.47, '2024-09': 2.97, '2024-10': 2.88, '2024-11': 2.24, '2024-12': 1.03,
-    '2025-01': 5.03, '2025-02': 2.27, '2025-03': 2.46, '2025-04': 3.00, '2025-05': 1.53, '2025-06': 1.37,
-    '2025-07': 2.06, '2025-08': 2.04, '2025-09': 3.23, '2025-10': 2.55, '2025-11': 0.87, '2025-12': 0.89,
-    '2026-01': 4.84, '2026-02': 2.96, '2026-03': 1.94, '2026-04': 4.18, '2026-05': 1.71, '2026-06': 0.99,
-    '2026-07': 1.78, '2026-08': 1.84, '2026-09': 1.84, '2026-10': 2.58,
-  };
-  async function loadCpi() {
-    let rates = { ...TUFE_BUILTIN };
-    try {
-      const f = await getJson('data/enflasyon.json');
-      for (const [k, x] of Object.entries(f?.aylik || {})) if (/^\d{4}-\d{2}$/.test(k) && Number.isFinite(+x)) rates[k] = +x;
-    } catch { /* yerleşik oranlar */ }
-    // Zincirleme endeks: ilk ayın öncesi = 100
-    const keys = Object.keys(rates).sort();
-    const idx = {};
-    let cur = 100;
-    for (const k of keys) { cur *= 1 + rates[k] / 100; idx[k] = cur; }
-    S.cpi = { idx, first: keys[0], last: keys[keys.length - 1] };
-  }
-  // Bir ayın tutarını son açıklanan ayın fiyatlarına taşıyan çarpan
-  function cpiFactor(y, m) {
-    const c = S.cpi;
-    if (!c) return 1;
-    const ym = `${y}-${String(m).padStart(2, '0')}`;
-    if (ym >= c.last) return 1;            // son açıklanan ay ve sonrası: zaten bugünün fiyatı
-    if (ym < c.first) return null;         // verisi olmayan eski ay
-    return c.idx[c.last] / c.idx[ym];
-  }
-
   async function loadHistory(pass) {
     S.history = { years: {} };
     S.historyState = 'none';
@@ -1672,7 +1639,7 @@
   const COMP_NOTES = [
     '<b>Satış tutarı</b>: geçmiş yılda Excel\'deki satış tutarı; bu yıl iade ve iptaller dahil tüm siparişlerin tutarı.',
     '<b>Net satış</b>: satış tutarından iade ve iptaller (geçmiş yılda tedarik iptali de) düşülmüş hali; bu yıl diğer ekranlardaki ciroyla aynıdır.',
-    '<b>Ürün başına ortalama tutar</b>: sipariş tutarı ÷ satılan ürün adedi. Toplam satırlarında aylık ortalamaların ortalaması değil, toplam tutar ÷ toplam adet kullanılır.',
+    '<b>Ürün başına ortalama</b> (birleşik tabloda tutarın yanındaki gri rakam): sipariş tutarı ÷ satılan ürün adedi. Toplam satırlarında aylık ortalamaların ortalaması değil, toplam tutar ÷ toplam adet kullanılır.',
     '<b>Fatura / sipariş adedi</b>: geçmiş yılda kesilen fatura adedi; bu yıl iptal edilmeyen sipariş adedi.',
     '<b>İptal</b>: geçmiş yılda tedarik iptali dahil. <b>İade adedi</b>: bu yıl iade ve kısmi iade olan sipariş sayısı.',
     '<b>Kaynak önceliği</b>: bir ay için Excel özeti yüklendiyse, o ay Entegra verisi olsa bile Excel\'deki rakamlar kullanılır.',
@@ -1828,9 +1795,6 @@
     const years = all.filter((y) => S.k.years.has(y));
     const color = (y) => css(YEAR_COLORS[(all.length - 1 - all.indexOf(y)) % YEAR_COLORS.length]);
     const tag = (y) => (hy.includes(y) && ly.includes(y) ? 'Excel + Entegra' : hy.includes(y) ? 'Excel' : 'Entegra');
-    const lastLbl = S.cpi ? `${MONTHS[+S.cpi.last.slice(5) - 1]} ${S.cpi.last.slice(0, 4)}` : '';
-    $('#k-real').innerHTML = S.cpi ? `<button class="chip" data-r="0" aria-pressed="${!S.k.real}">Nominal</button><button class="chip" data-r="1" aria-pressed="${Boolean(S.k.real)}" title="Tüm tutarlar ${lastLbl} fiyatlarına çevrilir (TÜİK TÜFE)">Enflasyondan arındırılmış</button>` : '';
-    $$('#k-real .chip').forEach((c) => c.addEventListener('click', () => { S.k.real = c.dataset.r === '1'; try { store.set('k-real', S.k.real ? '1' : '0'); } catch { /* yok say */ } renderCompare(); }));
     $('#k-years').innerHTML = all.map((y) => `<button class="chip" data-y="${y}" aria-pressed="${S.k.years.has(y)}" title="${tag(y)}"><span class="sw" style="background:${color(y)}"></span>${y}</button>`).join('');
     $$('#k-years .chip').forEach((c) => c.addEventListener('click', () => {
       const y = +c.dataset.y;
@@ -1840,14 +1804,7 @@
 
     const src = new Map(years.map((y) => [y, yearSource(y)]));
     const ms = Array.from({ length: 12 }, (_, i) => i + 1);
-    const real = Boolean(S.k.real && S.cpi);
-    // Enflasyondan arındırma: para ölçüleri son açıklanan ayın fiyatlarına taşınır (adetler değişmez)
-    const v = (y, m, mt) => {
-      const x = val(src.get(y), m, mt);
-      if (x === null || !real || !mt.money) return x;
-      const f = cpiFactor(y, m);
-      return f === null ? null : x * f;
-    };
+    const v = (y, m, mt) => val(src.get(y), m, mt);
     const isPartial = (y, m) => partialOf(src.get(y), m);
     const anyPartial = (m) => years.some((y) => isPartial(y, m));
     const mark = (m) => (anyPartial(m) ? '*' : '');
@@ -1898,12 +1855,30 @@
       { k: 'sales', title: 'Sipariş tutarı' },
       { k: 'units', title: 'Satılan ürün adedi' },
       { k: 'orders', title: 'Fatura adedi' },
-      { k: 'avgUnit', title: 'Ürün başına ortalama tutar' },
     ].map((g) => ({ ...g, mt: COMP.find((x) => x.k === g.k) })).filter((g) => years.some((y) => ms.some((m) => v(y, m, g.mt) !== null)));
     const swY = (y) => `<span class="sw" style="background:${color(y)}"></span>`;
-    const cellV = (g, y, m) => { const x = v(y, m, g.mt); return x === null ? '—' : `<span class="${isPartial(y, m) ? 'partial' : ''}">${fmtOf(g.mt)(x)}</span>`; };
+    // Sipariş tutarının yanında: tutar ÷ satılan ürün adedi (ürün başına ortalama)
+    const avgMt = COMP.find((x) => x.k === 'avgUnit');
+    const perHtml = (a) => (a === null || !Number.isFinite(a) ? '' : `<span class="per" title="Ürün başına ortalama tutar (sipariş tutarı ÷ satılan ürün adedi)">${tl(a)}</span>`);
+    const cellV = (g, y, m) => {
+      const x = v(y, m, g.mt);
+      if (x === null) return '—';
+      const per = g.k === 'sales' ? perHtml(v(y, m, avgMt)) : '';
+      return `<span class="${isPartial(y, m) ? 'partial' : ''}">${fmtOf(g.mt)(x)}</span>${per}`;
+    };
     const mrows = ms.filter((m) => GROUPS.some((g) => years.some((y) => v(y, m, g.mt) !== null)));
     const footRows = GROUPS.map((g) => totalRows(g.mt, (y) => y));
+    // Toplam satırlarında da ürün başına ortalama (toplam tutar ÷ toplam adet)
+    const si = GROUPS.findIndex((g) => g.k === 'sales');
+    if (si >= 0) {
+      const fr = footRows[si];
+      years.forEach((y) => {
+        const all = ms.filter((m) => v(y, m, avgMt) !== null);
+        if (fr[0] && fr[0][y] && fr[0][y] !== '—') fr[0][y] = fr[0][y].replace('<small>', `${perHtml(aggOf(y, all, avgMt))}<small>`);
+        const c = commonOf(GROUPS[si].mt);
+        if (fr[1] && fr[1][y] && c.length) fr[1][y] += perHtml(aggOf(y, c, avgMt));
+      });
+    }
     const nFoot = Math.max(...footRows.map((r) => r.length));
     const footLabels = footRows.find((r) => r.length === nFoot) || [];
     const thead = `<thead>
@@ -1912,13 +1887,13 @@
     const tbody = `<tbody>${mrows.map((m) => `<tr><td>${MONTHS[m - 1]}${mark(m)}</td>${GROUPS.map((g, gi) => years.map((y, yi) => `<td class="num${gi && !yi ? ' gsep' : ''}">${cellV(g, y, m)}</td>`).join('')).join('')}</tr>`).join('')}</tbody>`;
     const tfoot = `<tfoot>${Array.from({ length: nFoot }, (_, ri) => `<tr><td>${footLabels[ri]?.m || ''}</td>${GROUPS.map((g, gi) => years.map((y, yi) => `<td class="num${gi && !yi ? ' gsep' : ''}">${footRows[gi][ri]?.[y] ?? ''}</td>`).join('')).join('')}</tr>`).join('')}</tfoot>`;
     $('#k-panels').innerHTML = GROUPS.length ? `<div class="card k-combined">
-      <h2>Sipariş tutarı · Satılan ürün adedi · Fatura adedi · Ürün başına ortalama tutar</h2>
-      <p class="sub">${years.join(' · ')} · ay ay${real ? ` · <b>tutarlar ${lastLbl} fiyatlarıyla (enflasyondan arındırılmış)</b>` : ''} · altta yıl toplamları, ortak ayların toplamı ve önceki yıla göre değişim</p>
+      <h2>Sipariş tutarı · Satılan ürün adedi · Fatura adedi</h2>
+      <p class="sub">${years.join(' · ')} · ay ay · tutarın yanındaki gri rakam: ürün başına ortalama (tutar ÷ satılan ürün adedi) · altta yıl toplamları, ortak ayların toplamı ve önceki yıla göre değişim</p>
       <div class="table-scroll"><table id="k-combined">${thead}${tbody}${tfoot}</table></div></div>` : '';
     const kc = $('#k-panels .card'); if (kc) addCardButton(kc);
 
     // Ölçüler: seçili yıllardan en az birinde değeri olanlar
-    const metrics = COMP.filter((mt) => years.some((y) => ms.some((m) => v(y, m, mt) !== null)));
+    const metrics = COMP.filter((mt) => mt.k !== 'avgUnit').filter((mt) => years.some((y) => ms.some((m) => v(y, m, mt) !== null)));
     if (!metrics.find((x) => x.k === S.k.metric)) S.k.metric = metrics[0]?.k;
     const mt = metrics.find((x) => x.k === S.k.metric);
     $('#k-metrics').innerHTML = metrics.map((x) => `<button class="chip metric" data-k="${x.k}" aria-pressed="${x.k === S.k.metric}">${x.label}</button>`).join('');
@@ -2002,7 +1977,6 @@
 
     $('#k-sub').textContent = years.map((y) => `${y} (${tag(y)})`).join(' · ');
     $('#k-notes').innerHTML = [...COMP_NOTES,
-      S.cpi ? `<b>Enflasyondan arındırılmış</b>: her ayın tutarı, TÜİK TÜFE ile ${lastLbl} fiyatlarına çevrilir (ör. 2024 Ocak'taki 100 ₺ ≈ ${tl(100 * (cpiFactor(2024, 1) || 1))}). Böylece değişim yüzdeleri <b>reel</b> büyümeyi gösterir. Adetler etkilenmez. TÜFE oranları <b>docs/data/enflasyon.json</b> dosyasından okunur; her ay yeni oranı bu dosyaya ekleyin. ${lastLbl} sonrasındaki aylar düzeltilmeden gösterilir.` : '',
       'Toplamlar ve özet kartlar yalnızca seçili yılların <b>hepsinde</b> tamamlanmış olan ayları içerir.',
       ms.some(anyPartial) ? '* İşaretli aylarda en az bir yılın verisi tamamlanmadı (ay devam ediyor ya da o ayın başından itibaren sipariş çekilmedi).' : ''].filter(Boolean).join('<br>');
   }
@@ -2087,6 +2061,7 @@
       .replace(/<s(\s[^>]*)?>[\s\S]*?<\/s>/gi, '')
       .replace(/<span class="edit-badge[^"]*"[^>]*>[\s\S]*?<\/span>/gi, '')
       .replace(/<span class="track"[\s\S]*?<\/span><\/span>/gi, '')
+      .replace(/<span class="per"[^>]*>[\s\S]*?<\/span>/gi, '')
       .replace(/<br\s*\/?>/gi, ' ')
       .replace(/<[^>]+>/g, ''))
       .replace(/\s+/g, ' ').trim();
@@ -2131,7 +2106,9 @@
         while (grid[r][c] !== undefined) c++;
         const cs = +td.colSpan || 1; const rs = +td.rowSpan || 1;
         const txt = htmlText(td.innerHTML);
-        for (let i = 0; i < rs; i++) for (let j = 0; j < cs; j++) { grid[r + i] = grid[r + i] || []; grid[r + i][c + j] = { txt, num: td.classList.contains('num'), head: td.tagName === 'TH', first: i === 0 && j === 0, cs }; }
+        const perEl = td.querySelector('.per');
+        const per = perEl ? perEl.textContent.trim() : null;
+        for (let i = 0; i < rs; i++) for (let j = 0; j < cs; j++) { grid[r + i] = grid[r + i] || []; grid[r + i][c + j] = { txt, per, num: td.classList.contains('num'), head: td.tagName === 'TH', first: i === 0 && j === 0, cs }; }
         c += cs;
       }
     });
@@ -2140,8 +2117,18 @@
     if (!br.length) return null;
     const ncol = Math.max(...grid.map((r) => r.length));
     // Başlık: üst grup adı + alt başlık ("Sipariş tutarı 2024")
-    const head = Array.from({ length: ncol }, (_, c) => [...new Set(grid.slice(0, hr.length).map((r) => r[c]?.txt).filter(Boolean))].join(' '));
-    const body = grid.slice(hr.length).map((r) => Array.from({ length: ncol }, (_, c) => (r[c] ? (r[c].num ? parseCell(r[c].txt) : r[c].txt || null) : null)));
+    const head0 = Array.from({ length: ncol }, (_, c) => [...new Set(grid.slice(0, hr.length).map((r) => r[c]?.txt).filter(Boolean))].join(' '));
+    // Hücrede ek değer (ör. ürün başına ortalama) varsa yanına ayrı sütun olarak eklenir
+    const perCols = new Set();
+    grid.slice(hr.length).forEach((r) => r.forEach((x, c) => { if (x?.per) perCols.add(c); }));
+    const cols = []; for (let c = 0; c < ncol; c++) { cols.push([c, false]); if (perCols.has(c)) cols.push([c, true]); }
+    const head = cols.map(([c, p]) => (p ? `${head0[c]} · ürün başına` : head0[c]));
+    const body = grid.slice(hr.length).map((r) => cols.map(([c, p]) => {
+      const x = r[c];
+      if (!x) return null;
+      if (p) return x.per ? parseCell(x.per) : null;
+      return x.num ? parseCell(x.txt) : x.txt || null;
+    }));
     return { name, rows: [head, ...body], boldRows: new Set(fr.map((_, i) => 1 + br.length + i)), filterEnd: br.length + 1 };
   }
   // Grafik → sayfa (dönem × seri)
