@@ -1859,12 +1859,16 @@
     const swY = (y) => `<span class="sw" style="background:${color(y)}"></span>`;
     // Sipariş tutarının yanında: tutar ÷ satılan ürün adedi (ürün başına ortalama)
     const avgMt = COMP.find((x) => x.k === 'avgUnit');
-    const perHtml = (a) => (a === null || !Number.isFinite(a) ? '' : `<span class="per" title="Ürün başına ortalama tutar (sipariş tutarı ÷ satılan ürün adedi)">${tl(a)}</span>`);
+    const perHtml = (a) => (a === null || !Number.isFinite(a) ? '' : `<span class="per xcol" data-h="ürün başına" title="Ürün başına ortalama tutar (sipariş tutarı ÷ satılan ürün adedi)">${tl(a)}</span>`);
     const cellV = (g, y, m) => {
       const x = v(y, m, g.mt);
       if (x === null) return '—';
       const per = g.k === 'sales' ? perHtml(v(y, m, avgMt)) : '';
-      return `<span class="${isPartial(y, m) ? 'partial' : ''}">${fmtOf(g.mt)(x)}</span>${per}`;
+      // Bir önceki seçili yılın aynı ayına göre büyüme (devam eden aylarda gösterilmez)
+      const p = prevOf(y);
+      const px = p ? v(p, m, g.mt) : null;
+      const gr = px && !isPartial(y, m) && !isPartial(p, m) ? `<span class="gr xcol" data-h="${p}'e göre" title="${MONTHS[m - 1]} ${p}'e göre">${delta(x, px)}</span>` : '';
+      return `<span class="${isPartial(y, m) ? 'partial' : ''}">${fmtOf(g.mt)(x)}</span>${per}${gr}`;
     };
     const mrows = ms.filter((m) => GROUPS.some((g) => years.some((y) => v(y, m, g.mt) !== null)));
     const footRows = GROUPS.map((g) => totalRows(g.mt, (y) => y));
@@ -1888,7 +1892,7 @@
     const tfoot = `<tfoot>${Array.from({ length: nFoot }, (_, ri) => `<tr><td>${footLabels[ri]?.m || ''}</td>${GROUPS.map((g, gi) => years.map((y, yi) => `<td class="num${gi && !yi ? ' gsep' : ''}">${footRows[gi][ri]?.[y] ?? ''}</td>`).join('')).join('')}</tr>`).join('')}</tfoot>`;
     $('#k-panels').innerHTML = GROUPS.length ? `<div class="card k-combined">
       <h2>Sipariş tutarı · Satılan ürün adedi · Fatura adedi</h2>
-      <p class="sub">${years.join(' · ')} · ay ay · tutarın yanındaki gri rakam: ürün başına ortalama (tutar ÷ satılan ürün adedi) · altta yıl toplamları, ortak ayların toplamı ve önceki yıla göre değişim</p>
+      <p class="sub">${years.join(' · ')} · ay ay · gri rakam: ürün başına ortalama (tutar ÷ satılan ürün adedi) · ▲▼: önceki yılın aynı ayına göre büyüme · altta yıl toplamları, ortak ayların toplamı ve önceki yıla göre değişim</p>
       <div class="table-scroll"><table id="k-combined">${thead}${tbody}${tfoot}</table></div></div>` : '';
     const kc = $('#k-panels .card'); if (kc) addCardButton(kc);
 
@@ -2061,7 +2065,6 @@
       .replace(/<s(\s[^>]*)?>[\s\S]*?<\/s>/gi, '')
       .replace(/<span class="edit-badge[^"]*"[^>]*>[\s\S]*?<\/span>/gi, '')
       .replace(/<span class="track"[\s\S]*?<\/span><\/span>/gi, '')
-      .replace(/<span class="per"[^>]*>[\s\S]*?<\/span>/gi, '')
       .replace(/<br\s*\/?>/gi, ' ')
       .replace(/<[^>]+>/g, ''))
       .replace(/\s+/g, ' ').trim();
@@ -2105,10 +2108,11 @@
       for (const td of tr.children) {
         while (grid[r][c] !== undefined) c++;
         const cs = +td.colSpan || 1; const rs = +td.rowSpan || 1;
-        const txt = htmlText(td.innerHTML);
-        const perEl = td.querySelector('.per');
-        const per = perEl ? perEl.textContent.trim() : null;
-        for (let i = 0; i < rs; i++) for (let j = 0; j < cs; j++) { grid[r + i] = grid[r + i] || []; grid[r + i][c + j] = { txt, per, num: td.classList.contains('num'), head: td.tagName === 'TH', first: i === 0 && j === 0, cs }; }
+        // Hücredeki ek değerler (.xcol: ürün başına, büyüme) ayrı sütunlara gider
+        const extras = [...td.querySelectorAll('.xcol')].map((e) => ({ h: e.dataset.h || '', t: e.textContent.replace(/\s+/g, ' ').trim() }));
+        let txt;
+        if (extras.length) { const cl = td.cloneNode(true); cl.querySelectorAll('.xcol').forEach((e) => e.remove()); txt = htmlText(cl.innerHTML); } else txt = htmlText(td.innerHTML);
+        for (let i = 0; i < rs; i++) for (let j = 0; j < cs; j++) { grid[r + i] = grid[r + i] || []; grid[r + i][c + j] = { txt, extras, num: td.classList.contains('num'), head: td.tagName === 'TH', first: i === 0 && j === 0, cs }; }
         c += cs;
       }
     });
@@ -2119,14 +2123,14 @@
     // Başlık: üst grup adı + alt başlık ("Sipariş tutarı 2024")
     const head0 = Array.from({ length: ncol }, (_, c) => [...new Set(grid.slice(0, hr.length).map((r) => r[c]?.txt).filter(Boolean))].join(' '));
     // Hücrede ek değer (ör. ürün başına ortalama) varsa yanına ayrı sütun olarak eklenir
-    const perCols = new Set();
-    grid.slice(hr.length).forEach((r) => r.forEach((x, c) => { if (x?.per) perCols.add(c); }));
-    const cols = []; for (let c = 0; c < ncol; c++) { cols.push([c, false]); if (perCols.has(c)) cols.push([c, true]); }
-    const head = cols.map(([c, p]) => (p ? `${head0[c]} · ürün başına` : head0[c]));
-    const body = grid.slice(hr.length).map((r) => cols.map(([c, p]) => {
+    const extraH = Array.from({ length: ncol }, () => []);
+    grid.slice(hr.length).forEach((r) => r.forEach((x, c) => { (x?.extras || []).forEach((e) => { if (!extraH[c].includes(e.h)) extraH[c].push(e.h); }); }));
+    const cols = []; for (let c = 0; c < ncol; c++) { cols.push([c, null]); extraH[c].forEach((h) => cols.push([c, h])); }
+    const head = cols.map(([c, h]) => (h !== null ? `${head0[c]} · ${h}` : head0[c]));
+    const body = grid.slice(hr.length).map((r) => cols.map(([c, h]) => {
       const x = r[c];
       if (!x) return null;
-      if (p) return x.per ? parseCell(x.per) : null;
+      if (h !== null) { const e = x.extras.find((z) => z.h === h); return e ? parseCell(e.t) : null; }
       return x.num ? parseCell(x.txt) : x.txt || null;
     }));
     return { name, rows: [head, ...body], boldRows: new Set(fr.map((_, i) => 1 + br.length + i)), filterEnd: br.length + 1 };
